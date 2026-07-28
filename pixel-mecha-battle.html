@@ -2584,6 +2584,7 @@ class Game {
                     this.menuMode = 'modeSelect';
                 }
             }
+            if (isMobile) clearTouchPressed();
             return;
         }
 
@@ -2601,9 +2602,6 @@ class Game {
             if (isMobile) clearTouchPressed();
             return;
         }
-
-        // 每帧重置单次按下事件（在菜单/结束处理后，游戏逻辑前）
-        if (isMobile) clearTouchPressed();
 
         // 检测是否需要分屏
         const charDistance = Math.abs(this.mecha1.x - this.mecha2.x);
@@ -2670,6 +2668,9 @@ class Game {
 
         // 更新特效
         this.updateEffects();
+
+        // 帧末：清空移动端单次按下事件（确保下一帧不会重复触发）
+        if (isMobile) clearTouchPressed();
     }
 
     // 执行禁锢技能
