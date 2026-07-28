@@ -99,6 +99,119 @@
             transform: translate(-50%, -50%) translate(2px, 2px);
             box-shadow: 2px 2px 0 #1a5276;
         }
+
+        /* ==================== 移动端触屏按钮 ==================== */
+        .touch-controls {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+            touch-action: none;
+        }
+
+        .touch-btn {
+            position: absolute;
+            pointer-events: auto;
+            border-radius: 50%;
+            background: rgba(50, 50, 60, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            color: #fff;
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            line-height: 1.1;
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+            transition: transform 0.05s, background 0.05s;
+            touch-action: none;
+        }
+
+        .touch-btn:active, .touch-btn.active {
+            transform: scale(0.88);
+            background: rgba(80, 120, 200, 0.7);
+            border-color: rgba(255, 255, 255, 0.6);
+        }
+
+        .touch-btn.skill { background: rgba(80, 50, 100, 0.5); }
+        .touch-btn.skill:active, .touch-btn.skill.active { background: rgba(120, 70, 150, 0.75); }
+        .touch-btn.attack { background: rgba(180, 50, 50, 0.5); }
+        .touch-btn.attack:active, .touch-btn.attack.active { background: rgba(200, 70, 70, 0.75); }
+        .touch-btn.move { background: rgba(50, 80, 130, 0.5); }
+        .touch-btn.move:active, .touch-btn.move.active { background: rgba(70, 110, 180, 0.75); }
+        .touch-btn.weapon { background: rgba(50, 120, 80, 0.5); border-radius: 8px; }
+        .touch-btn.weapon:active, .touch-btn.weapon.active { background: rgba(70, 160, 100, 0.75); }
+
+        /* 武器选择切换按钮（仅武器选择界面显示） */
+        .touch-btn.weapon { display: none; }
+        .touch-controls.weapon-select-active .touch-btn.weapon { display: flex; }
+        .touch-controls.weapon-select-active .touch-btn:not(.weapon):not(#btnMenu) { display: none; }
+
+        /* 横屏提示遮罩 */
+        .rotate-hint {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: #0a0a0f;
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #f1c40f;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .rotate-hint .icon {
+            font-size: 64px;
+            animation: rotate 1.5s ease-in-out infinite;
+        }
+
+        @keyframes rotate {
+            0%, 100% { transform: rotate(0deg); }
+            50% { transform: rotate(90deg); }
+        }
+
+        /* 移动端显示触屏控制 + 隐藏键盘说明 */
+        @media (max-width: 900px), (pointer: coarse) {
+            .touch-controls { display: block; }
+            .controls-info { display: none; }
+        }
+
+        /* 手机端画布自适应 - 全屏填充 */
+        @media (max-width: 900px) {
+            body {
+                overflow: hidden;
+                position: fixed;
+                width: 100%;
+                height: 100%;
+            }
+            #gameWrapper {
+                width: 100vw;
+                height: 100vh;
+                box-shadow: none;
+            }
+            #gameCanvas {
+                width: 100% !important;
+                height: 100% !important;
+                object-fit: contain;
+            }
+            #startBtn {
+                font-size: 18px;
+                padding: 10px 30px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -113,6 +226,41 @@
                 <span>玩家2(红):</span> ←/→移动 ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气 | 7/8选武器
             </div>
         </div>
+    </div>
+
+    <!-- 移动端触屏控制 -->
+    <div class="touch-controls" id="touchControls">
+        <!-- 左侧：方向键（左拇指自然区域） -->
+        <div class="touch-btn move" id="btnLeft" style="left:16px;bottom:24px;width:66px;height:66px;font-size:30px;">←</div>
+        <div class="touch-btn move" id="btnRight" style="left:96px;bottom:24px;width:66px;height:66px;font-size:30px;">→</div>
+        <div class="touch-btn move" id="btnJump" style="left:56px;bottom:104px;width:66px;height:66px;font-size:22px;">跳</div>
+
+        <!-- 右侧：战斗按钮（右拇指自然区域） -->
+        <!-- 底层：攻击(最大) + 防御 -->
+        <div class="touch-btn attack" id="btnAttack" style="right:16px;bottom:24px;width:78px;height:78px;font-size:18px;">攻<br>击</div>
+        <div class="touch-btn" id="btnDefend" style="right:108px;bottom:32px;width:62px;height:62px;font-size:18px;">防</div>
+        <!-- 中层：远程 + 喷气 -->
+        <div class="touch-btn" id="btnRanged" style="right:108px;bottom:108px;width:62px;height:62px;font-size:18px;">远</div>
+        <div class="touch-btn" id="btnJet" style="right:16px;bottom:116px;width:62px;height:62px;font-size:18px;">喷</div>
+        <!-- 上层：技能（闪现/禁锢/大招） -->
+        <div class="touch-btn skill" id="btnFlash" style="right:184px;bottom:32px;width:62px;height:62px;font-size:18px;">闪</div>
+        <div class="touch-btn skill" id="btnImprison" style="right:184px;bottom:108px;width:62px;height:62px;font-size:18px;">禁</div>
+        <div class="touch-btn skill" id="btnUltimate" style="right:108px;bottom:184px;width:62px;height:62px;font-size:18px;">激</div>
+
+        <!-- 武器选择切换按钮（仅武器选择界面显示） -->
+        <div class="touch-btn weapon" id="btnWeaponL" style="left:40px;bottom:40px;width:80px;height:80px;font-size:36px;">◀</div>
+        <div class="touch-btn weapon" id="btnWeaponR" style="right:40px;bottom:40px;width:80px;height:80px;font-size:36px;">▶</div>
+        <div class="touch-btn weapon" id="btnWeaponStart" style="left:50%;bottom:40px;transform:translateX(-50%);width:120px;height:80px;font-size:24px;border-radius:12px;">开始<br>战斗</div>
+
+        <!-- 右上角：菜单按钮 -->
+        <div class="touch-btn" id="btnMenu" style="right:12px;top:12px;width:48px;height:48px;font-size:22px;background:rgba(80,80,80,0.5);">≡</div>
+    </div>
+
+    <!-- 横屏提示 -->
+    <div class="rotate-hint" id="rotateHint">
+        <div class="icon">📱</div>
+        <p style="margin-top:20px;font-size:20px;">请横屏使用</p>
+        <p style="margin-top:8px;font-size:14px;color:#888;">将手机旋转到横屏以获得最佳体验</p>
     </div>
 
 <script>
@@ -256,6 +404,174 @@ const Input = {
         }
     }
 };
+
+// ===================== 移动端检测与触屏输入 =====================
+const isMobile = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const touchState = {
+    left: false, right: false, jump: false,
+    attack: false, defend: false, ranged: false,
+    flash: false, imprison: false, ultimate: false, jet: false,
+    // 单次按下事件（对应 isPressed 语义）
+    attackPressed: false, rangedPressed: false,
+    flashPressed: false, imprisonPressed: false, ultimatePressed: false,
+    // 菜单
+    menuPressed: false
+};
+
+// 初始化触屏按钮事件
+function initTouchControls() {
+    if (!isMobile) return;
+
+    const btnMap = [
+        { id: 'btnLeft',     key: 'left',     hold: true },
+        { id: 'btnRight',    key: 'right',    hold: true },
+        { id: 'btnJump',     key: 'jump',     hold: true },
+        { id: 'btnDefend',   key: 'defend',   hold: true },
+        { id: 'btnJet',      key: 'jet',      hold: true },
+        { id: 'btnAttack',   key: 'attack',   hold: false, pressedKey: 'attackPressed' },
+        { id: 'btnRanged',   key: 'ranged',   hold: false, pressedKey: 'rangedPressed' },
+        { id: 'btnFlash',    key: 'flash',    hold: false, pressedKey: 'flashPressed' },
+        { id: 'btnImprison', key: 'imprison', hold: false, pressedKey: 'imprisonPressed' },
+        { id: 'btnUltimate', key: 'ultimate', hold: false, pressedKey: 'ultimatePressed' },
+        { id: 'btnMenu',     key: 'menu',     hold: false, pressedKey: 'menuPressed' }
+    ];
+
+    btnMap.forEach(b => {
+        const el = document.getElementById(b.id);
+        if (!el) return;
+
+        const onStart = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            touchState[b.key] = true;
+            el.classList.add('active');
+            if (!b.hold && b.pressedKey) {
+                touchState[b.pressedKey] = true;
+            }
+        };
+        const onEnd = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            touchState[b.key] = false;
+            el.classList.remove('active');
+        };
+
+        el.addEventListener('touchstart', onStart, { passive: false });
+        el.addEventListener('touchend', onEnd, { passive: false });
+        el.addEventListener('touchcancel', onEnd, { passive: false });
+        // 兼容鼠标（桌面调试用）
+        el.addEventListener('mousedown', onStart);
+        el.addEventListener('mouseup', onEnd);
+        el.addEventListener('mouseleave', onEnd);
+    });
+
+    // 菜单按钮：模拟空格按下
+    const menuBtn = document.getElementById('btnMenu');
+    if (menuBtn) {
+        menuBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            // 触发空格键事件
+            Input.pressedEvents[' '] = (Input.pressedEvents[' '] || 0) + 1;
+        }, { passive: false });
+    }
+
+    // 武器选择切换按钮（移动端用按钮代替滑动）
+    const btnWeaponL = document.getElementById('btnWeaponL');
+    const btnWeaponR = document.getElementById('btnWeaponR');
+    const btnWeaponStart = document.getElementById('btnWeaponStart');
+
+    if (btnWeaponL) {
+        const wStart = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            btnWeaponL.classList.add('active');
+            if (typeof game !== 'undefined' && game.state === 'menu' && game.menuMode === 'weaponSelect') {
+                game.p1WeaponIdx = (game.p1WeaponIdx - 1 + WEAPON_KEYS.length) % WEAPON_KEYS.length;
+            }
+        };
+        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponL.classList.remove('active'); };
+        btnWeaponL.addEventListener('touchstart', wStart, { passive: false });
+        btnWeaponL.addEventListener('touchend', wEnd, { passive: false });
+        btnWeaponL.addEventListener('touchcancel', wEnd, { passive: false });
+        btnWeaponL.addEventListener('mousedown', wStart);
+        btnWeaponL.addEventListener('mouseup', wEnd);
+        btnWeaponL.addEventListener('mouseleave', wEnd);
+    }
+
+    if (btnWeaponR) {
+        const wStart = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            btnWeaponR.classList.add('active');
+            if (typeof game !== 'undefined' && game.state === 'menu' && game.menuMode === 'weaponSelect') {
+                game.p1WeaponIdx = (game.p1WeaponIdx + 1) % WEAPON_KEYS.length;
+            }
+        };
+        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponR.classList.remove('active'); };
+        btnWeaponR.addEventListener('touchstart', wStart, { passive: false });
+        btnWeaponR.addEventListener('touchend', wEnd, { passive: false });
+        btnWeaponR.addEventListener('touchcancel', wEnd, { passive: false });
+        btnWeaponR.addEventListener('mousedown', wStart);
+        btnWeaponR.addEventListener('mouseup', wEnd);
+        btnWeaponR.addEventListener('mouseleave', wEnd);
+    }
+
+    if (btnWeaponStart) {
+        const sStart = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            btnWeaponStart.classList.add('active');
+            // 触发空格键事件（开始游戏）
+            Input.pressedEvents[' '] = (Input.pressedEvents[' '] || 0) + 1;
+        };
+        const sEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponStart.classList.remove('active'); };
+        btnWeaponStart.addEventListener('touchstart', sStart, { passive: false });
+        btnWeaponStart.addEventListener('touchend', sEnd, { passive: false });
+        btnWeaponStart.addEventListener('touchcancel', sEnd, { passive: false });
+        btnWeaponStart.addEventListener('mousedown', sStart);
+        btnWeaponStart.addEventListener('mouseup', sEnd);
+        btnWeaponStart.addEventListener('mouseleave', sEnd);
+    }
+
+    // 菜单中的模式选择：点击画布即进入单机模式
+    const canvas = document.getElementById('gameCanvas');
+    if (canvas) {
+        canvas.addEventListener('touchstart', (e) => {
+            if (typeof game !== 'undefined') {
+                if (game.state === 'menu' && game.menuMode === 'modeSelect') {
+                    // 模式选择：点击屏幕即进入单机模式
+                    touchState.menuPressed = true;
+                } else if (game.state === 'gameover' && game.gameOverTimer > 60) {
+                    // 游戏结束：点击屏幕返回菜单
+                    touchState.menuPressed = true;
+                }
+            }
+        }, { passive: true });
+    }
+}
+
+// 每帧重置单次按下事件
+function clearTouchPressed() {
+    touchState.attackPressed = false;
+    touchState.rangedPressed = false;
+    touchState.flashPressed = false;
+    touchState.imprisonPressed = false;
+    touchState.ultimatePressed = false;
+    touchState.menuPressed = false;
+}
+
+// 横屏检测
+function checkOrientation() {
+    const hint = document.getElementById('rotateHint');
+    if (!hint) return;
+    if (isMobile && window.innerHeight > window.innerWidth) {
+        hint.style.display = 'flex';
+    } else {
+        hint.style.display = 'none';
+    }
+}
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 300));
 
 // ===================== 粒子系统 =====================
 class Particle {
@@ -851,6 +1167,21 @@ class Mecha {
 
     getInput() {
         if (this.isPlayer1) {
+            // 移动端使用触屏输入
+            if (isMobile) {
+                return {
+                    left: touchState.left,
+                    right: touchState.right,
+                    jump: touchState.jump,
+                    attack: touchState.attackPressed,
+                    defend: touchState.defend,
+                    ranged: touchState.rangedPressed,
+                    flash: touchState.flashPressed,
+                    imprison: touchState.imprisonPressed,
+                    ultimate: touchState.ultimatePressed,
+                    jet: touchState.jet
+                };
+            }
             return {
                 left: Input.isDown('a') || Input.isDown('A'),
                 right: Input.isDown('d') || Input.isDown('D'),
@@ -2158,17 +2489,27 @@ class Game {
 
     update() {
         Input.update();
+        if (isMobile) clearTouchPressed();
 
         if (this.state === 'menu') {
+            // 移动端模式选择：通过 canvas 触屏点击选择
             if (this.menuMode === 'modeSelect') {
-                // 模式选择阶段：1=单机模式, 2=多人模式
-                if (Input.isPressed('1')) {
-                    this.gameMode = 'pve';
-                    this.menuMode = 'weaponSelect';
-                }
-                if (Input.isPressed('2')) {
-                    this.gameMode = 'pvp';
-                    this.menuMode = 'weaponSelect';
+                if (isMobile) {
+                    // 模式选择由 canvas touchstart 事件设置 touchState.menuPressed
+                    if (touchState.menuPressed) {
+                        this.gameMode = 'pve'; // 移动端默认单机模式
+                        this.menuMode = 'weaponSelect';
+                    }
+                } else {
+                    // 桌面端：1=单机模式, 2=多人模式
+                    if (Input.isPressed('1')) {
+                        this.gameMode = 'pve';
+                        this.menuMode = 'weaponSelect';
+                    }
+                    if (Input.isPressed('2')) {
+                        this.gameMode = 'pvp';
+                        this.menuMode = 'weaponSelect';
+                    }
                 }
             } else if (this.menuMode === 'weaponSelect') {
                 // 武器选择阶段
@@ -2207,9 +2548,11 @@ class Game {
 
         if (this.state === 'gameover') {
             this.gameOverTimer++;
-            if (this.gameOverTimer > 60 && Input.isPressed(' ')) {
-                this.state = 'menu';
-                this.menuMode = 'modeSelect';
+            if (this.gameOverTimer > 60) {
+                if (Input.isPressed(' ') || (isMobile && touchState.menuPressed)) {
+                    this.state = 'menu';
+                    this.menuMode = 'modeSelect';
+                }
             }
             // 继续更新粒子和伤害数字
             this.updateEffects();
@@ -2802,12 +3145,21 @@ class Game {
             drawPixelText(ctx, '按 [2] 选择', pvpX + cardW / 2, pvpY + 95, 16, '#e74c3c');
 
             // 操作提示
-            drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 380, 10, '#777');
-            drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶', canvas.width / 2, 400, 10, '#666');
+            if (isMobile) {
+                drawPixelText(ctx, '点击屏幕进入单机模式', canvas.width / 2, 380, 16, '#aaa');
+                drawPixelText(ctx, '移动端仅支持单机模式（vs AI Bot）', canvas.width / 2, 400, 12, '#666');
+            } else {
+                drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 380, 10, '#777');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶', canvas.width / 2, 400, 10, '#666');
+            }
 
             const blink = Math.sin(Date.now() * 0.006) > 0;
             if (blink) {
-                drawPixelText(ctx, '按 1 或 2 选择模式', canvas.width / 2, 470, 18, '#fff');
+                if (isMobile) {
+                    drawPixelText(ctx, '点击屏幕开始', canvas.width / 2, 470, 20, '#fff');
+                } else {
+                    drawPixelText(ctx, '按 1 或 2 选择模式', canvas.width / 2, 470, 18, '#fff');
+                }
             }
         } else if (this.menuMode === 'weaponSelect') {
             // === 武器选择界面 ===
@@ -2899,13 +3251,22 @@ class Game {
             drawPixelText(ctx, 'VS', canvas.width / 2, 270, 28, '#f1c40f');
 
             // 操作说明（底部）
-            drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 448, 10, '#777');
-            drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶,松手加快坠落', canvas.width / 2, 466, 10, '#666');
+            if (isMobile) {
+                drawPixelText(ctx, '◀ ▶ 按钮切换武器 | 点击[开始战斗]进入游戏', canvas.width / 2, 448, 12, '#777');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤)', canvas.width / 2, 466, 10, '#666');
+            } else {
+                drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 448, 10, '#777');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶,松手加快坠落', canvas.width / 2, 466, 10, '#666');
+            }
 
             // 开始提示
             const blink = Math.sin(Date.now() * 0.006) > 0;
             if (blink) {
-                drawPixelText(ctx, '按 空格 开始战斗  |  ESC 返回模式选择', canvas.width / 2, 500, 18, '#fff');
+                if (isMobile) {
+                    drawPixelText(ctx, '点击下方[开始战斗]按钮', canvas.width / 2, 500, 20, '#fff');
+                } else {
+                    drawPixelText(ctx, '按 空格 开始战斗  |  ESC 返回模式选择', canvas.width / 2, 500, 18, '#fff');
+                }
             }
         }
     }
@@ -2982,7 +3343,11 @@ class Game {
         if (this.gameOverTimer > 60) {
             const blink = Math.sin(Date.now() * 0.005) > 0;
             if (blink) {
-                drawPixelText(ctx, '按 空格 返回菜单', canvas.width / 2, 340, 18, '#aaa');
+                if (isMobile) {
+                    drawPixelText(ctx, '点击屏幕返回菜单', canvas.width / 2, 340, 18, '#aaa');
+                } else {
+                    drawPixelText(ctx, '按 空格 返回菜单', canvas.width / 2, 340, 18, '#aaa');
+                }
             }
         }
     }
@@ -3079,6 +3444,8 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
     });
 
     Input.init();
+    initTouchControls();
+    checkOrientation();
 
     const startBtn = document.getElementById('startBtn');
     startBtn.addEventListener('click', () => {
@@ -3091,12 +3458,24 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
         game.update();
         game.draw();
 
-        // 同步按钮显示状态（菜单中不显示按钮，必须用键盘选武器+空格开始）
+        // 同步按钮显示状态
         if (game.state === 'gameover' && game.gameOverTimer > 60) {
             startBtn.style.display = 'block';
             startBtn.textContent = '返回菜单';
         } else {
             startBtn.style.display = 'none';
+        }
+
+        // 移动端：武器选择界面显示武器切换按钮
+        if (isMobile) {
+            const tc = document.getElementById('touchControls');
+            if (tc) {
+                if (game.state === 'menu' && game.menuMode === 'weaponSelect') {
+                    tc.classList.add('weapon-select-active');
+                } else {
+                    tc.classList.remove('weapon-select-active');
+                }
+            }
         }
 
         requestAnimationFrame(gameLoop);
