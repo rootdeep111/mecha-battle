@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
@@ -25,15 +25,19 @@
             box-sizing: border-box;
         }
 
-        body {
+        html, body {
             background: #0a0a0f;
             display: flex;
             justify-content: center;
             align-items: center;
+            width: 100%;
+            height: 100%;
             min-height: 100vh;
+            min-height: -webkit-fill-available;
             font-family: 'Courier New', monospace;
             overflow: hidden;
             image-rendering: pixelated;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
         }
 
         #gameWrapper {
@@ -191,21 +195,29 @@
 
         /* 手机端画布自适应 - 全屏填充 */
         @media (max-width: 900px) {
-            body {
+            html, body {
                 overflow: hidden;
                 position: fixed;
                 width: 100%;
                 height: 100%;
+                top: 0;
+                left: 0;
             }
             #gameWrapper {
                 width: 100vw;
                 height: 100vh;
+                width: 100dvw;
+                height: 100dvh;
                 box-shadow: none;
+                position: fixed;
+                top: 0;
+                left: 0;
             }
             #gameCanvas {
                 width: 100% !important;
                 height: 100% !important;
                 object-fit: contain;
+                display: block;
             }
             #startBtn {
                 font-size: 18px;
@@ -533,7 +545,7 @@ function initTouchControls() {
         btnWeaponStart.addEventListener('mouseleave', sEnd);
     }
 
-    // 菜单中的模式选择：点击画布即进入单机模式
+    // 菜单中的模式选择：点击画布即进入单机模式 / 游戏结束返回菜单
     const canvas = document.getElementById('gameCanvas');
     if (canvas) {
         canvas.addEventListener('touchstart', (e) => {
@@ -541,6 +553,7 @@ function initTouchControls() {
                 if (game.state === 'menu' && game.menuMode === 'modeSelect') {
                     // 模式选择：点击屏幕即进入单机模式
                     touchState.menuPressed = true;
+                    requestGameFullscreen();
                 } else if (game.state === 'gameover' && game.gameOverTimer > 60) {
                     // 游戏结束：点击屏幕返回菜单
                     touchState.menuPressed = true;
@@ -572,6 +585,30 @@ function checkOrientation() {
 }
 window.addEventListener('resize', checkOrientation);
 window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 300));
+
+// ===================== 全屏 API =====================
+function requestGameFullscreen() {
+    if (!isMobile) return;
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+        elem.requestFullscreen().catch(() => {});
+    } else if (elem.webkitRequestFullscreen) {
+        elem.webkitRequestFullscreen().catch(() => {});
+    } else if (elem.msRequestFullscreen) {
+        elem.msRequestFullscreen().catch(() => {});
+    }
+}
+
+function exitGameFullscreen() {
+    if (!isMobile) return;
+    if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+    } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen().catch(() => {});
+    } else if (document.msExitFullscreen) {
+        document.msExitFullscreen().catch(() => {});
+    }
+}
 
 // ===================== 粒子系统 =====================
 class Particle {
@@ -2489,7 +2526,6 @@ class Game {
 
     update() {
         Input.update();
-        if (isMobile) clearTouchPressed();
 
         if (this.state === 'menu') {
             // 移动端模式选择：通过 canvas 触屏点击选择
@@ -2499,6 +2535,9 @@ class Game {
                     if (touchState.menuPressed) {
                         this.gameMode = 'pve'; // 移动端默认单机模式
                         this.menuMode = 'weaponSelect';
+                        touchState.menuPressed = false; // 消费掉事件
+                        // 移动端进入游戏时请求全屏
+                        requestGameFullscreen();
                     }
                 } else {
                     // 桌面端：1=单机模式, 2=多人模式
@@ -2529,7 +2568,7 @@ class Game {
                         this.p2WeaponIdx = (this.p2WeaponIdx + 1) % WEAPON_KEYS.length;
                     }
                 }
-                // 空格开始游戏
+                // 空格/按钮开始游戏
                 if (Input.isPressed(' ')) {
                     // PVE模式Bot随机选武器
                     if (this.gameMode === 'pve') {
@@ -2537,6 +2576,8 @@ class Game {
                     }
                     this.state = 'playing';
                     this.reset();
+                    // 移动端开始战斗时请求全屏
+                    if (isMobile) requestGameFullscreen();
                 }
                 // ESC返回模式选择
                 if (Input.isPressed('Escape')) {
@@ -2552,12 +2593,17 @@ class Game {
                 if (Input.isPressed(' ') || (isMobile && touchState.menuPressed)) {
                     this.state = 'menu';
                     this.menuMode = 'modeSelect';
+                    touchState.menuPressed = false;
                 }
             }
             // 继续更新粒子和伤害数字
             this.updateEffects();
+            if (isMobile) clearTouchPressed();
             return;
         }
+
+        // 每帧重置单次按下事件（在菜单/结束处理后，游戏逻辑前）
+        if (isMobile) clearTouchPressed();
 
         // 检测是否需要分屏
         const charDistance = Math.abs(this.mecha1.x - this.mecha2.x);
