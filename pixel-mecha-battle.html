@@ -1,0 +1,3118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <!-- PWA 应用清单 -->
+    <link rel="manifest" href="./manifest.json">
+    <!-- PWA 主题色 -->
+    <meta name="theme-color" content="#f1c40f">
+    <meta name="description" content="像素风双人对战机甲游戏，支持单机AI对战和多人对战">
+    <!-- iOS Safari 支持 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="机甲对决">
+    <link rel="apple-touch-icon" href="./icon-192.png">
+    <link rel="icon" type="image/png" href="./icon-192.png">
+    <title>像素机甲对决</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #0a0a0f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            image-rendering: pixelated;
+        }
+
+        #gameWrapper {
+            position: relative;
+            box-shadow: 0 0 40px rgba(0, 150, 255, 0.3);
+        }
+
+        canvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        .controls-info {
+            position: absolute;
+            bottom: -40px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            color: #888;
+            font-size: 12px;
+            padding: 0 10px;
+        }
+
+        .control-group {
+            text-align: center;
+        }
+
+        .control-group span {
+            color: #0af;
+            font-weight: bold;
+        }
+
+        .control-group.p2 span {
+            color: #f44;
+        }
+
+        #startBtn {
+            position: absolute;
+            left: 50%;
+            top: 52%;
+            transform: translate(-50%, -50%);
+            padding: 16px 48px;
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            background: #3498db;
+            border: 4px solid #fff;
+            box-shadow: 4px 4px 0 #1a5276;
+            cursor: pointer;
+            display: none;
+            image-rendering: pixelated;
+            z-index: 10;
+        }
+
+        #startBtn:hover {
+            background: #5dade2;
+        }
+
+        #startBtn:active {
+            transform: translate(-50%, -50%) translate(2px, 2px);
+            box-shadow: 2px 2px 0 #1a5276;
+        }
+    </style>
+</head>
+<body>
+    <div id="gameWrapper">
+        <canvas id="gameCanvas" width="960" height="540" tabindex="0"></canvas>
+        <button id="startBtn">开始游戏</button>
+        <div class="controls-info">
+            <div class="control-group p1">
+                <span>玩家1(蓝):</span> A/D移动 W跳 J攻 K防 L远 U闪 I禁 O大 F喷气 | Q/E选武器
+            </div>
+            <div class="control-group p2">
+                <span>玩家2(红):</span> ←/→移动 ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气 | 7/8选武器
+            </div>
+        </div>
+    </div>
+
+<script>
+/**
+ * ===================== 像素机甲对决 =====================
+ * 游戏玩法：
+ * - 双人对战，各操控一台机甲
+ * - 通过移动、跳跃、攻击、防御、远程击败对手
+ * - 血量归零即战败（500HP）
+ *
+ * 操作说明：
+ * 玩家1（蓝色机甲）：A/D左右移动，W跳跃，J攻击，K防御，L远程攻击，U闪现，I禁锢，O大招，F喷气 | Q/E选武器
+ * 玩家2（红色机甲）：←/→左右移动，↑跳跃，1攻击，2防御，3远程攻击，4闪现，5禁锢，6大招，0喷气 | 7/8选武器
+ *
+ * 核心机制：
+ * - 三种武器：短刀(攻速快/移速快/范围小)、长枪(范围大/伤害低)、剑盾(防御强/移速慢)
+ * - 三段连击：伤害因武器而异，命中后15帧内再按攻击键可取消后摇进入下一段
+ * - 完美格挡(弹反)：防御按下前5帧内受击 → 伤害为0，敌人额外硬直+10帧
+ * - 悬浮平台：可跳上站立，不可破坏金属梯子结构
+ * - 远程攻击：发射粒子弹幕，伤害10，可在滞空时发射
+ * - 防御减伤：短刀/长枪减10点，剑盾减20点
+ * - 受击后有短暂硬直
+ * - 怒气系统：攻击/受击积攒怒气，1怒气=禁锢，2怒气=激光束(150伤)，闪现无消耗
+ * - 喷气飞行：空中长按喷气键向上飞行（气泵值5秒），松手加速坠落，地面恢复10秒
+ * ======================================================
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+// ===================== 全局常量 =====================
+const WORLD_WIDTH = 4000;  // 世界总宽度（摄像机跟随的大世界）
+const GROUND_Y = 440;
+const GRAVITY = 0.6;
+const FRICTION = 0.85;
+const MOVE_SPEED = 4;
+const JUMP_FORCE = -11.5; // 最大跳跃高度约110px，从地面够不到高位平台150px，但从低位平台够到65px
+const MAX_HP = 500;
+const ATTACK_DAMAGE = 12;
+const DEFEND_REDUCTION = 0.6;
+const KNOCKBACK_FORCE = 5;
+
+// === 武器系统 ===
+const WEAPONS = {
+    dagger:  { name: '短刀', moveSpeed: 5,   attackRange: 30,  comboDamage: [10, 20, 30], defense: 10, desc: '攻速快/移速快/范围小' },
+    spear:   { name: '长枪', moveSpeed: 3.5, attackRange: 60,  comboDamage: [7,  15, 25], defense: 10, desc: '范围大/伤害低' },
+    swordShield: { name: '剑盾', moveSpeed: 3,   attackRange: 45,  comboDamage: [10, 20, 30], defense: 20, desc: '防御强/移速慢' }
+};
+const WEAPON_KEYS = ['dagger', 'spear', 'swordShield'];
+
+// === 新增：连击系统常量 ===
+// 三段连击：每段伤害、判定帧窗口、总持续帧
+const COMBO_STAGES = [
+    { name: '平砍', damage: 10, hitStart: 5,  hitEnd: 12, totalFrames: 22, knockback: KNOCKBACK_FORCE, knockdown: false },
+    { name: '横斩', damage: 20, hitStart: 8,  hitEnd: 15, totalFrames: 26, knockback: KNOCKBACK_FORCE + 1, knockdown: false },
+    { name: '下劈', damage: 30, hitStart: 10, hitEnd: 18, totalFrames: 32, knockback: KNOCKBACK_FORCE + 3, knockdown: true }
+];
+// 连击取消窗口：命中后该帧数内按下攻击可进入下一段
+const COMBO_CANCEL_WINDOW = 20;
+// 未命中或超出窗口则重置段位
+
+// === 新增：完美格挡（弹反）常量 ===
+const PARRY_WINDOW = 5;          // 防御按下后前 5 帧为完美格挡窗口
+const PARRY_BONUS_STUN = 10;     // 弹反成功时敌人额外硬直
+const PARRY_PROJECTILE_DAMAGE = 12; // 弹反反弹弹幕伤害
+
+// === 新增：远程攻击常量 ===
+const PROJECTILE_DAMAGE = 10;
+const PROJECTILE_SPEED = 8;
+const PROJECTILE_COOLDOWN = 35;
+const PROJECTILE_LIFE = 90;
+
+// === 新增：平台常量 ===
+// const PLATFORM_MAX_HP = 3;     // 已废弃：平台改为不可破坏
+
+// === 新增：世界纵向扩展常量 ===
+const WORLD_TOP = -400;            // 世界最高处（向上400px的空间）
+
+// === 新增：喷气飞行技能常量 ===
+const JET_MAX = 300;               // 气泵最大值（300帧=5秒@60fps）
+const JET_RECOVER_RATE = 0.5;      // 每帧恢复0.5（600帧=10秒回满）
+const JET_THRUST = -0.8;           // 喷气推力（每帧减少0.8的vy，对抗重力0.6，净上升0.2/帧）
+const JET_FAST_FALL = 1.2;         // 松手后额外重力（加快坠落，只施加一次）
+
+// === 新增：怒气系统常量 ===
+const RAGE_ON_ATTACK = 0.05;   // 自主攻击增加怒气
+const RAGE_ON_HIT = 0.1;       // 受击增加怒气
+const MAX_RAGE = 2;              // 最大怒气
+const FLASH_DISTANCE = 80;      // 闪现距离
+const FLASH_COOLDOWN = 90;      // 闪现冷却帧数
+const IMPRISON_COST = 1;         // 禁锢消耗怒气
+const IMPRISON_DURATION = 150;   // 禁锢持续帧数（延长）
+const ULTIMATE_COST = 2;         // 大招消耗怒气
+const SUPER_PROJECTILE_DAMAGE = 150;
+const SUPER_PROJECTILE_SPEED = 7;
+const SUPER_PROJECTILE_LIFE = 120;
+const SKILL_COOLDOWN = 45;       // 技能公共冷却
+
+// ===================== 输入管理 =====================
+const Input = {
+    keys: {},
+    pressedEvents: {},
+
+    init() {
+        window.addEventListener('keydown', (e) => {
+            // 记录本帧新按下的事件（事件计数模式，避免被 update 吞掉）
+            if (!this.keys[e.key]) {
+                this.pressedEvents[e.key] = (this.pressedEvents[e.key] || 0) + 1;
+            }
+            this.keys[e.key] = true;
+            // 防止方向键/空格/回车触发浏览器默认行为
+            if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Enter'].includes(e.key)) {
+                e.preventDefault();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            this.keys[e.key] = false;
+        });
+    },
+
+    isDown(key) {
+        return !!this.keys[key];
+    },
+
+    isPressed(key) {
+        const count = this.pressedEvents[key] || 0;
+        if (count > 0) {
+            this.pressedEvents[key] = count - 1;
+            return true;
+        }
+        return false;
+    },
+
+    update() {
+        // 清空已消费完的事件
+        for (const key in this.pressedEvents) {
+            if (this.pressedEvents[key] <= 0) {
+                delete this.pressedEvents[key];
+            }
+        }
+    }
+};
+
+// ===================== 粒子系统 =====================
+class Particle {
+    constructor(x, y, vx, vy, color, life) {
+        this.x = x;
+        this.y = y;
+        this.vx = vx;
+        this.vy = vy;
+        this.color = color;
+        this.life = life;
+        this.maxLife = life;
+        this.size = Math.random() * 4 + 2;
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.15;
+        this.life--;
+    }
+
+    draw(ctx) {
+        const alpha = this.life / this.maxLife;
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.fillRect(Math.floor(this.x), Math.floor(this.y), this.size, this.size);
+        ctx.globalAlpha = 1;
+    }
+}
+
+const particles = [];
+
+function spawnParticles(x, y, count, color, speed = 3) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const spd = Math.random() * speed + 1;
+        particles.push(new Particle(
+            x, y,
+            Math.cos(angle) * spd,
+            Math.sin(angle) * spd - 2,
+            color,
+            Math.random() * 20 + 15
+        ));
+    }
+}
+
+function spawnHitParticles(x, y, color) {
+    spawnParticles(x, y, 8, color, 4);
+    spawnParticles(x, y, 5, '#ffffff', 3);
+}
+
+// ===================== 像素绘制工具 =====================
+function drawPixelRect(ctx, x, y, w, h, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.floor(x), Math.floor(y), w, h);
+}
+
+function drawPixelText(ctx, text, x, y, size, color, align = 'center') {
+    ctx.font = `bold ${size}px 'Courier New', monospace`;
+    ctx.fillStyle = color;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
+}
+
+// ===================== 弹幕类（远程攻击） =====================
+class Projectile {
+    constructor(x, y, dir, owner, color) {
+        this.x = x;
+        this.y = y;
+        this.vx = dir * PROJECTILE_SPEED;
+        this.vy = 0;
+        this.width = 12;
+        this.height = 12;
+        this.owner = owner;        // 发射者引用（避免误伤自己）
+        this.color = color;
+        this.life = PROJECTILE_LIFE;
+        this.dead = false;
+        this.parryBounced = false; // 是否被弹反反弹
+    }
+
+    update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        this.vy += 0.05; // 轻微重力，形成抛物线
+        this.life--;
+
+        // 轨迹粒子
+        if (Math.random() < 0.5) {
+            particles.push(new Particle(
+                this.x + this.width / 2,
+                this.y + this.height / 2,
+                (Math.random() - 0.5) * 1,
+                (Math.random() - 0.5) * 1,
+                this.color,
+                10
+            ));
+        }
+
+        // 出界或寿命到期
+        if (this.life <= 0 || this.x < -20 || this.x > WORLD_WIDTH + 20 || this.y > canvas.height) {
+            this.dead = true;
+        }
+    }
+
+    draw(ctx) {
+        // 发光内核
+        drawPixelRect(ctx, this.x + 2, this.y + 2, 8, 8, '#fff');
+        drawPixelRect(ctx, this.x, this.y, 12, 12, this.color);
+        drawPixelRect(ctx, this.x + 3, this.y + 3, 6, 6, '#fff');
+    }
+
+    // AABB 命中盒
+    getHitbox() {
+        return { x: this.x, y: this.y, width: this.width, height: this.height };
+    }
+}
+
+// ===================== 悬浮平台类（不可破坏金属梯子） =====================
+class Platform {
+    constructor(x, y, width) {
+        this.x = x;
+        this.y = y;           // 平台顶部 Y 坐标
+        this.width = width;
+        this.height = 14;
+        // 以下属性保留但不使用（平台改为不可破坏）
+        this.maxHp = 999;
+        this.hp = 999;
+        this.broken = false;
+        this.breakTimer = 0;
+        this.shakeTimer = 0;
+    }
+
+    update() {
+        // 平台不可破坏，无需更新状态
+    }
+
+    // 平台不可破坏，直接返回 false
+    takeHit() {
+        return false;
+    }
+
+    draw(ctx) {
+        const px = this.x;
+        const py = this.y;
+        const pw = this.width;
+        const ph = this.height;
+
+        // === 侧边栏杆（两端竖直柱子 + 顶部横杆） ===
+        const railHeight = 20;  // 栏杆高度
+        const railWidth = 4;   // 栏杆柱子宽度
+        // 左侧栏杆柱子
+        drawPixelRect(ctx, px, py - railHeight, railWidth, railHeight + ph, '#7F8C8D');
+        drawPixelRect(ctx, px + 1, py - railHeight, 2, railHeight + ph, '#A8B2BD');
+        // 右侧栏杆柱子
+        drawPixelRect(ctx, px + pw - railWidth, py - railHeight, railWidth, railHeight + ph, '#7F8C8D');
+        drawPixelRect(ctx, px + pw - railWidth + 1, py - railHeight, 2, railHeight + ph, '#A8B2BD');
+        // 顶部横杆
+        drawPixelRect(ctx, px, py - railHeight, pw, 3, '#7F8C8D');
+        drawPixelRect(ctx, px, py - railHeight, pw, 2, '#A8B2BD');
+
+        // === 平台主体（银灰色金属） ===
+        // 底部阴影
+        drawPixelRect(ctx, px, py + ph - 3, pw, 3, '#7F8C8D');
+        // 主体
+        drawPixelRect(ctx, px, py, pw, ph, '#A8B2BD');
+        // 表面
+        drawPixelRect(ctx, px + 1, py + 1, pw - 2, ph - 4, '#C5CCD6');
+        // 顶部高光
+        drawPixelRect(ctx, px, py, pw, 3, '#DDE2E8');
+
+        // === 网格纹理（每隔4px一条深色线） ===
+        ctx.fillStyle = 'rgba(100, 110, 120, 0.3)';
+        for (let gy = py + 4; gy < py + ph - 3; gy += 4) {
+            ctx.fillRect(px + 2, gy, pw - 4, 1);
+        }
+
+        // === 铆钉（两端各一个小圆点） ===
+        ctx.fillStyle = '#8a9bae';
+        ctx.beginPath();
+        ctx.arc(px + 8, py + ph / 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#DDE2E8';
+        ctx.fillRect(px + 7, py + ph / 2 - 1, 2, 2);
+
+        ctx.fillStyle = '#8a9bae';
+        ctx.beginPath();
+        ctx.arc(px + pw - 8, py + ph / 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#DDE2E8';
+        ctx.fillRect(px + pw - 9, py + ph / 2 - 1, 2, 2);
+    }
+
+    // 单向碰撞：只在角色从上方下落时承接（头顶碰撞）
+    checkLanding(prevFootY, footY, footX) {
+        // 角色脚下是否在平台水平范围内，且本帧从上方穿过
+        if (footX >= this.x && footX <= this.x + this.width) {
+            if (prevFootY <= this.y && footY >= this.y) {
+                return true;
+            }
+        }
+        return false;
+    }
+}
+
+// ===================== 木桶类 =====================
+class Barrel {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y !== undefined ? y : GROUND_Y - 32;  // 默认地面，可传入平台y
+        this.width = 28;
+        this.height = 32;
+        this.maxHp = 3;
+        this.hp = this.maxHp;
+        this.destroyed = false;
+        this.explosionTimer = 0;   // 爆炸动画计时
+        this.shakeTimer = 0;       // 受击抖动
+        this.explosionRadius = 130; // 爆炸范围伤害半径
+        this.explosionDamage = 25; // 爆炸伤害
+        this.explosionApplied = false; // 爆炸伤害是否已施加
+        this.hasRespawned = false;   // 是否已刷新新木桶
+    }
+
+    update() {
+        if (this.shakeTimer > 0) this.shakeTimer--;
+        if (this.destroyed) {
+            this.explosionTimer++;
+        }
+    }
+
+    takeHit() {
+        if (this.destroyed) return false;
+        this.hp--;
+        this.shakeTimer = 6;
+        spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 5, '#8B4513', 3);
+        if (this.hp <= 0) {
+            this.explode();
+            return true;
+        }
+        return false;
+    }
+
+    explode() {
+        this.destroyed = true;
+        this.explosionTimer = 0;
+        this.explosionApplied = false;
+        // 爆炸粒子特效
+        spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 20, '#f39c12', 6);
+        spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 12, '#e74c3c', 5);
+        spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 8, '#fff', 3);
+        // 地面冲击波
+        for (let i = 0; i < 16; i++) {
+            const angle = Math.random() * Math.PI;
+            const spd = Math.random() * 4 + 2;
+            particles.push(new Particle(
+                this.x + this.width / 2, this.y + this.height,
+                Math.cos(angle) * spd, -Math.sin(angle) * spd - 2,
+                '#f39c12', 12 + Math.random() * 10
+            ));
+        }
+    }
+
+    // 检查爆炸范围伤害（爆炸后持续检查，直到施加伤害或窗口结束）
+    checkExplosionDamage(mecha) {
+        if (!this.destroyed) return false;
+        if (this.explosionTimer < 2 || this.explosionTimer > 12) return false;
+        const cx = this.x + this.width / 2;
+        const cy = this.y + this.height / 2;
+        const mx = mecha.x + mecha.width / 2;
+        const my = mecha.y + mecha.height / 2;
+        const dist = Math.sqrt((cx - mx) ** 2 + (cy - my) ** 2);
+        return dist < this.explosionRadius;
+    }
+
+    draw(ctx) {
+        if (this.destroyed && this.explosionTimer > 20) return;
+
+        const shake = this.shakeTimer > 0 ? (Math.random() - 0.5) * 3 : 0;
+        const bx = this.x + shake;
+
+        if (this.destroyed) {
+            // 爆炸动画：扩散光圈
+            const progress = Math.min(1, this.explosionTimer / 15);
+            ctx.globalAlpha = 1 - progress;
+            const centerX = this.x + this.width / 2;
+            const centerY = this.y + this.height / 2;
+            const radius = this.explosionRadius * progress;
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#e74c3c';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius * 0.55, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius * 0.25, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            return;
+        }
+
+        // 木桶主体
+        drawPixelRect(ctx, bx + 4, this.y, 20, 32, '#8B4513');
+        drawPixelRect(ctx, bx + 6, this.y + 2, 16, 28, '#A0522D');
+        // 金属箍
+        drawPixelRect(ctx, bx + 3, this.y + 6, 22, 4, '#7f8c8d');
+        drawPixelRect(ctx, bx + 3, this.y + 16, 22, 4, '#7f8c8d');
+        drawPixelRect(ctx, bx + 3, this.y + 26, 22, 4, '#7f8c8d');
+        // 顶盖/底盖
+        drawPixelRect(ctx, bx + 2, this.y, 24, 4, '#5D3A1A');
+        drawPixelRect(ctx, bx + 2, this.y + 28, 24, 4, '#5D3A1A');
+        // 木板纹理
+        drawPixelRect(ctx, bx + 9, this.y + 10, 2, 14, '#6B3410');
+        drawPixelRect(ctx, bx + 18, this.y + 10, 2, 14, '#6B3410');
+
+        // HP 指示条（受击后显示）
+        if (this.hp < this.maxHp) {
+            ctx.fillStyle = '#333';
+            ctx.fillRect(bx + 4, this.y - 8, 20, 4);
+            ctx.fillStyle = this.hp >= 2 ? '#2ecc71' : '#e74c3c';
+            ctx.fillRect(bx + 4, this.y - 8, Math.floor(20 * this.hp / this.maxHp), 4);
+        }
+    }
+
+    // 碰撞检测（用于攻击和弹幕命中）
+    getHitbox() {
+        if (this.destroyed) return null;
+        return { x: this.x, y: this.y, width: this.width, height: this.height };
+    }
+}
+
+// ===================== 超大范围远程弹幕类（大招） =====================
+// ===================== 激光束类（大招）=====================
+class SuperProjectile {
+    constructor(caster) {
+        this.caster = caster;      // 发射者引用
+        this.dir = caster.facing;  // 方向
+        this.life = 40;            // 激光持续40帧
+        this.width = 32;           // 激光宽度
+        this.length = 500;         // 激光长度
+        this.damageTimer = 0;      // 伤害间隔计时
+        this.dead = false;
+        this.color = caster.colors.primary;
+        // 初始位置（随角色更新）
+        this.x = caster.x + caster.width / 2;
+        this.y = caster.y + caster.height / 2 - 10;
+    }
+
+    update() {
+        this.life--;
+        this.damageTimer++;
+        // 激光跟随角色位置
+        this.x = this.caster.x + this.caster.width / 2;
+        this.y = this.caster.y + this.caster.height / 2 - 10;
+        // 粒子特效
+        if (Math.random() < 0.6) {
+            const px = this.dir > 0
+                ? this.x + Math.random() * this.length
+                : this.x - Math.random() * this.length;
+            particles.push(new Particle(
+                px, this.y + (Math.random() - 0.5) * this.width * 0.5,
+                (Math.random() - 0.5) * 2, (Math.random() - 0.5) * 1,
+                this.color, 10
+            ));
+        }
+        if (this.life <= 0) this.dead = true;
+    }
+
+    // 激光碰撞盒：沿朝向延伸的长条
+    getHitbox() {
+        if (this.dir > 0) {
+            return { x: this.x, y: this.y - this.width / 2, width: this.length, height: this.width };
+        } else {
+            return { x: this.x - this.length, y: this.y - this.width / 2, width: this.length, height: this.width };
+        }
+    }
+
+    draw(ctx) {
+        const alpha = Math.min(1, this.life / 8) * (0.7 + Math.random() * 0.3);
+        ctx.globalAlpha = alpha;
+
+        const startX = this.x;
+        const startY = this.y;
+        const endX = this.dir > 0 ? startX + this.length : startX - this.length;
+        const endY = startY;
+
+        // 外发光（粗线）
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = this.width;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        // 中层光
+        ctx.strokeStyle = this.caster.colors.accent;
+        ctx.lineWidth = this.width * 0.5;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        // 内核（白线）
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = this.width * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(endX, endY);
+        ctx.stroke();
+
+        ctx.globalAlpha = 1;
+    }
+}
+
+// ===================== 摄像机类 =====================
+class Camera {
+    constructor() {
+        this.x = 0;           // 摄像机左边界的世界坐标
+        this.y = 0;           // 摄像机顶部的世界坐标（用于纵向跟随）
+        this.targetX = 0;     // 目标X位置
+        this.targetY = 0;     // 目标Y位置
+        this.smoothSpeed = 0.12; // 平滑跟随系数
+        // 分屏模式用
+        this.x1 = 0;
+        this.y1 = 0;
+        this.x2 = 0;
+        this.y2 = 0;
+    }
+
+    // 更新：同时跟随两个机甲的 x 和 y 中点（合屏模式）
+    update(mecha1, mecha2) {
+        // 计算两个机甲的X中点
+        const midX = (mecha1.x + mecha2.x) / 2;
+        const target = midX - canvas.width / 2;
+        // 限制X在世界边界内
+        const minX = 0;
+        const maxX = WORLD_WIDTH - canvas.width;
+        this.targetX = Math.max(minX, Math.min(maxX, target));
+
+        // 计算两个机甲的Y中点
+        const midY = (mecha1.y + mecha2.y) / 2;
+        // Y的边界：最低0（地面正常视图），最高WORLD_TOP（最顶部）
+        const minY = Math.min(0, WORLD_TOP);  // WORLD_TOP 是负数
+        const maxY = 0;
+        this.targetY = Math.max(minY, Math.min(maxY, midY - canvas.height / 2 + 100));
+
+        // 平滑跟随
+        this.x += (this.targetX - this.x) * this.smoothSpeed;
+        this.y += (this.targetY - this.y) * this.smoothSpeed;
+    }
+
+    // 分屏模式：各自跟随一个机甲
+    updateSplitScreen(mecha1, mecha2) {
+        const halfW = canvas.width / 2;
+        const minY = Math.min(0, WORLD_TOP);
+        const maxY = 0;
+
+        // 左屏跟随玩家1
+        let targetX1 = mecha1.x - halfW / 2;
+        targetX1 = Math.max(0, Math.min(WORLD_WIDTH - halfW, targetX1));
+        let targetY1 = mecha1.y - canvas.height / 2 + 60;
+        targetY1 = Math.max(minY, Math.min(maxY, targetY1));
+        this.x1 += (targetX1 - this.x1) * this.smoothSpeed;
+        this.y1 += (targetY1 - this.y1) * this.smoothSpeed;
+
+        // 右屏跟随玩家2
+        let targetX2 = mecha2.x - halfW / 2;
+        targetX2 = Math.max(0, Math.min(WORLD_WIDTH - halfW, targetX2));
+        let targetY2 = mecha2.y - canvas.height / 2 + 60;
+        targetY2 = Math.max(minY, Math.min(maxY, targetY2));
+        this.x2 += (targetX2 - this.x2) * this.smoothSpeed;
+        this.y2 += (targetY2 - this.y2) * this.smoothSpeed;
+    }
+
+    // 世界坐标 → 屏幕坐标
+    toScreen(worldX) {
+        return worldX - this.x;
+    }
+
+    // 屏幕坐标 → 世界坐标
+    toWorld(screenX) {
+        return screenX + this.x;
+    }
+
+    reset() {
+        this.x = 0;
+        this.y = 0;
+        this.targetX = 0;
+        this.targetY = 0;
+        this.x1 = 0;
+        this.y1 = 0;
+        this.x2 = 0;
+        this.y2 = 0;
+    }
+}
+
+// ===================== 机甲类 =====================
+class Mecha {
+    constructor(x, isPlayer1, weaponKey = 'swordShield') {
+        this.x = x;
+        this.y = GROUND_Y - 64;
+        this.vx = 0;
+        this.vy = 0;
+        this.width = 40;
+        this.height = 64;
+        this.isPlayer1 = isPlayer1;
+        this.facing = isPlayer1 ? 1 : -1;
+
+        // 武器
+        this.weaponKey = weaponKey;
+        this.weapon = WEAPONS[weaponKey];
+        this.moveSpeed = this.weapon.moveSpeed;
+        this.attackRange = this.weapon.attackRange;
+        this.comboDamage = this.weapon.comboDamage;
+        this.defenseValue = this.weapon.defense;
+
+        // 状态
+        this.hp = MAX_HP;
+        this.maxHp = MAX_HP;
+        this.state = 'idle'; // idle, walk, jump, attack, defend, hit, dead, knockdown, imprisoned
+        this.stateTimer = 0;
+        this.animFrame = 0;
+
+        // 战斗
+        this.attackCooldown = 0;
+        this.defendTimer = 0;
+        this.hitStun = 0;
+        this.attackActive = false;
+        this.attackHitbox = null;
+
+        // === 新增：连击系统 ===
+        this.comboStage = 0;       // 当前连击段位 0=未开始, 1=平砍, 2=横斩, 3=下劈
+        this.comboCancelTimer = 0; // 命中后的取消窗口倒计时
+        this.hasHitThisAttack = false; // 本段攻击是否已命中（用于判定是否可取消）
+        this.comboResetTimer = 0;  // 未命中/超时后等待重置
+
+        // === 新增：完美格挡（弹反）===
+        this.parryTimer = 0;       // 防御按下后前 5 帧为完美格挡窗口
+        this.parrySuccess = false; // 弹反成功标记（用于动画）
+
+        // === 新增：远程攻击 ===
+        this.projectileCooldown = 0;
+
+        // === 新增：击倒状态 ===
+        this.knockdownTimer = 0;   // 击倒倒地时长
+
+        // === 新增：平台站立引用 ===
+        this.platformStandingOn = null;
+        this.prevFootY = this.y + this.height;
+
+        // === 新增：怒气系统 ===
+        this.rage = 0;            // 怒气值 0~2
+        this.skillCooldown = 0;   // 技能公共冷却
+        this.flashCooldown = 0;   // 闪现冷却
+        this.imprisonTimer = 0;   // 被禁锢剩余帧
+        this.wantImprison = false; // 禁锢请求标记
+        this.wantUltimate = false; // 大招请求标记
+
+        // === 新增：喷气飞行技能 ===
+        this.jetFuel = JET_MAX;      // 当前气泵值
+        this.isJetting = false;       // 是否正在喷气飞行
+        this.wasJetting = false;      // 上一帧是否在喷气（用于检测松手时加速坠落）
+
+        // 颜色配置
+        this.colors = isPlayer1 ? {
+            primary: '#3498db',
+            dark: '#1a5276',
+            light: '#5dade2',
+            accent: '#85c1e9',
+            eye: '#f1c40f',
+            joint: '#5d6d7e'
+        } : {
+            primary: '#e74c3c',
+            dark: '#922b21',
+            light: '#ec7063',
+            accent: '#f1948a',
+            eye: '#2ecc71',
+            joint: '#5d6d7e'
+        };
+
+        // 部位偏移（动画用）
+        this.headOffset = { x: 0, y: 0 };
+        this.bodyOffset = { x: 0, y: 0 };
+        this.armLOffset = { x: 0, y: 0 };
+        this.armROffset = { x: 0, y: 0 };
+        this.legLOffset = { x: 0, y: 0 };
+        this.legROffset = { x: 0, y: 0 };
+        this.weaponOffset = { x: 0, y: 0, angle: 0 };
+    }
+
+    getInput() {
+        if (this.isPlayer1) {
+            return {
+                left: Input.isDown('a') || Input.isDown('A'),
+                right: Input.isDown('d') || Input.isDown('D'),
+                jump: Input.isDown('w') || Input.isDown('W'),
+                attack: Input.isPressed('j') || Input.isPressed('J'),
+                defend: Input.isDown('k') || Input.isDown('K'),
+                ranged: Input.isPressed('l') || Input.isPressed('L'),
+                flash: Input.isPressed('u') || Input.isPressed('U'),
+                imprison: Input.isPressed('i') || Input.isPressed('I'),
+                ultimate: Input.isPressed('o') || Input.isPressed('O'),
+                jet: Input.isDown('f') || Input.isDown('F')  // 喷气飞行按键
+            };
+        } else {
+            // PVE 模式下 P2 由 Bot AI 控制
+            if (typeof game !== 'undefined' && game.gameMode === 'pve') {
+                return game.botInput;
+            }
+            return {
+                left: Input.isDown('ArrowLeft'),
+                right: Input.isDown('ArrowRight'),
+                jump: Input.isDown('ArrowUp'),
+                attack: Input.isPressed('1'),
+                defend: Input.isDown('2'),
+                ranged: Input.isPressed('3'),
+                flash: Input.isPressed('4'),
+                imprison: Input.isPressed('5'),
+                ultimate: Input.isPressed('6'),
+                jet: Input.isDown('0')  // 喷气飞行按键
+            };
+        }
+    }
+
+    update(platforms) {
+        if (this.hp <= 0) {
+            this.state = 'dead';
+            return;
+        }
+
+        const input = this.getInput();
+        this.stateTimer++;
+        this.animFrame = Math.floor(this.stateTimer / 8);
+
+        // 冷却更新
+        if (this.attackCooldown > 0) this.attackCooldown--;
+        if (this.hitStun > 0) this.hitStun--;
+        if (this.projectileCooldown > 0) this.projectileCooldown--;
+        if (this.parryTimer > 0) this.parryTimer--;
+        if (this.comboCancelTimer > 0) this.comboCancelTimer--;
+        if (this.knockdownTimer > 0) this.knockdownTimer--;
+        if (this.skillCooldown > 0) this.skillCooldown--;
+        if (this.flashCooldown > 0) this.flashCooldown--;
+        // 连击重置计时（未命中或超时）
+        if (this.comboResetTimer > 0) {
+            this.comboResetTimer--;
+            if (this.comboResetTimer <= 0) {
+                this.comboStage = 0;
+            }
+        }
+
+        // 记录上一帧脚部 Y（用于平台单向碰撞）
+        this.prevFootY = this.y + this.height;
+
+        // 禁锢状态检查：被禁锢时无法操作（禁锢结束后自动恢复）
+        if (this.imprisonTimer > 0) {
+            this.imprisonTimer--;
+            this.state = 'imprisoned';
+            this.applyPhysics(platforms);
+            this.updateAnimation();
+            return;
+        }
+        // 禁锢结束后重置状态
+        if (this.state === 'imprisoned') {
+            this.state = 'idle';
+            this.stateTimer = 0;
+        }
+
+        // 击倒状态：倒地无法操作
+        if (this.state === 'knockdown') {
+            if (this.knockdownTimer <= 0) {
+                this.state = 'idle';
+                this.stateTimer = 0;
+                this.comboStage = 0;
+            }
+            this.applyPhysics(platforms);
+            this.updateAnimation();
+            return;
+        }
+
+        // 硬直时无法操作（除非弹反成功取消硬直）
+        if (this.hitStun > 0 && !this.parrySuccess) {
+            this.applyPhysics(platforms);
+            this.updateAnimation();
+            return;
+        }
+
+        // 弹反成功后立即恢复操作
+        if (this.parrySuccess && this.hitStun <= 0) {
+            this.parrySuccess = false;
+            this.state = 'idle';
+            this.stateTimer = 0;
+        }
+
+        // 状态处理
+        switch (this.state) {
+            case 'idle':
+            case 'walk':
+                this.handleGroundMovement(input);
+                this.handleCombatInput(input);
+                break;
+
+            case 'jump':
+                this.handleAirMovement(input);
+                this.handleCombatInput(input);
+                // 滞空时可发射远程攻击
+                if (input.ranged && this.projectileCooldown <= 0) {
+                    this.fireProjectile();
+                }
+                break;
+
+            case 'attack':
+                this.handleAttack(input);
+                break;
+
+            case 'defend':
+                // 完美格挡窗口倒计时
+                if (this.parryTimer <= 0) {
+                    // 超过窗口仍是普通防御
+                }
+                if (!input.defend) {
+                    this.state = 'idle';
+                    this.stateTimer = 0;
+                    this.parryTimer = 0;
+                }
+                this.vx *= FRICTION;
+                // 防御中也可发射远程攻击（轻攻击）
+                if (input.ranged && this.projectileCooldown <= 0) {
+                    this.fireProjectile();
+                }
+                break;
+
+            case 'hit':
+                if (this.hitStun <= 0) {
+                    this.state = 'idle';
+                    this.stateTimer = 0;
+                }
+                break;
+        }
+
+        // 地面/跳跃状态也可发射远程攻击
+        if ((this.state === 'idle' || this.state === 'walk') && input.ranged && this.projectileCooldown <= 0) {
+            this.fireProjectile();
+        }
+
+        // 技能输入处理：禁锢/大招请求标记
+        this.wantImprison = false;
+        this.wantUltimate = false;
+        if (input.imprison && this.skillCooldown <= 0 && this.rage >= IMPRISON_COST &&
+            this.state !== 'dead' && this.state !== 'knockdown' && this.state !== 'imprisoned' && this.state !== 'attack') {
+            this.wantImprison = true;
+        }
+        if (input.ultimate && this.skillCooldown <= 0 && this.rage >= ULTIMATE_COST &&
+            this.state !== 'dead' && this.state !== 'knockdown' && this.state !== 'imprisoned' && this.state !== 'attack') {
+            this.wantUltimate = true;
+        }
+        this.handleFlash(input);
+
+        // === 喷气飞行处理 ===
+        // 检测喷气输入（在空中或跳跃状态下）
+        if (input.jet && this.jetFuel > 0 && !this.onGround() &&
+            this.state !== 'dead' && this.state !== 'imprisoned') {
+            this.isJetting = true;
+            // 喷气推力对抗重力
+            this.vy += JET_THRUST;
+            // 限制最大上升速度
+            this.vy = Math.max(this.vy, -4);
+            // 消耗气泵值
+            this.jetFuel -= 1;
+            if (this.jetFuel < 0) this.jetFuel = 0;
+            // 产生喷气火焰粒子（每3帧产生一次）
+            if (this.stateTimer % 3 === 0) {
+                const flameX = this.x + this.width / 2 + (Math.random() - 0.5) * 10;
+                const flameY = this.y + this.height;
+                particles.push(new Particle(
+                    flameX, flameY,
+                    (Math.random() - 0.5) * 2,
+                    Math.random() * 3 + 2,
+                    Math.random() > 0.5 ? '#ff6600' : '#ffcc00',
+                    12 + Math.random() * 8
+                ));
+            }
+        } else {
+            // 松手检测：上一帧在喷气，这帧松手且在空中，施加一次额外下坠力
+            if (this.wasJetting && !input.jet && !this.onGround()) {
+                this.vy += JET_FAST_FALL;
+            }
+            this.isJetting = false;
+        }
+        this.wasJetting = this.isJetting;
+
+        // 气泵恢复：在地面或平台上时缓慢恢复
+        if (this.onGround() && this.jetFuel < JET_MAX) {
+            this.jetFuel += JET_RECOVER_RATE;
+            if (this.jetFuel > JET_MAX) this.jetFuel = JET_MAX;
+        }
+
+        // 边缘坠落检测：idle/walk 状态下不在地面则转入 jump
+        if ((this.state === 'idle' || this.state === 'walk') && !this.onGround()) {
+            this.state = 'jump';
+            this.stateTimer = 0;
+        }
+
+        this.applyPhysics(platforms);
+        this.updateAnimation();
+        this.updateAttackHitbox();
+    }
+
+    // 闪现技能
+    handleFlash(input) {
+        if (!input.flash || this.flashCooldown > 0 || this.skillCooldown > 0) return;
+        if (this.state === 'dead' || this.state === 'knockdown' || this.state === 'imprisoned') return;
+        if (this.state === 'attack' || this.state === 'defend') return;
+        for (let i = 0; i < 3; i++) {
+            afterimages.push({
+                x: this.x, y: this.y, facing: this.facing,
+                colors: this.isPlayer1 ? { primary: '#3498db', dark: '#1a5276', light: '#5dade2', accent: '#85c1e9', eye: '#f1c40f', joint: '#5d6d7e' } : { primary: '#e74c3c', dark: '#922b21', light: '#ec7063', accent: '#f1948a', eye: '#2ecc71', joint: '#5d6d7e' },
+                timer: 12 + i * 3, maxTimer: 12 + i * 3
+            });
+        }
+        this.x += this.facing * FLASH_DISTANCE;
+        this.x = Math.max(20, Math.min(WORLD_WIDTH - 20 - this.width, this.x));
+        spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 8, this.colors.accent, 3);
+        this.flashCooldown = FLASH_COOLDOWN;
+        this.skillCooldown = 15;
+    }
+
+    // 统一处理战斗输入（攻击 + 防御）
+    handleCombatInput(input) {
+        if (input.attack && this.attackCooldown <= 0) {
+            // 连击系统：判定是否进入下一段
+            this.startAttack();
+        }
+        if (input.defend) {
+            if (this.state !== 'defend') {
+                this.state = 'defend';
+                this.stateTimer = 0;
+                this.parryTimer = PARRY_WINDOW; // 开启完美格挡窗口
+            }
+        }
+    }
+
+    handleGroundMovement(input) {
+        if (input.left && !input.right) {
+            this.vx = -this.moveSpeed;
+            this.facing = -1;
+            this.state = 'walk';
+        } else if (input.right && !input.left) {
+            this.vx = this.moveSpeed;
+            this.facing = 1;
+            this.state = 'walk';
+        } else {
+            this.vx *= FRICTION;
+            if (Math.abs(this.vx) < 0.5) this.vx = 0;
+            this.state = 'idle';
+        }
+
+        if (input.jump && this.onGround()) {
+            this.vy = JUMP_FORCE;
+            this.state = 'jump';
+            this.stateTimer = 0;
+            spawnParticles(this.x, this.y + this.height, 5, '#888', 2);
+        }
+    }
+
+    handleAirMovement(input) {
+        if (input.left) {
+            this.vx = -this.moveSpeed * 0.8;
+            this.facing = -1;
+        } else if (input.right) {
+            this.vx = this.moveSpeed * 0.8;
+            this.facing = 1;
+        }
+
+        if (this.onGround()) {
+            this.state = 'idle';
+            this.stateTimer = 0;
+            spawnParticles(this.x, this.y + this.height, 4, '#888', 2);
+        }
+    }
+
+    startAttack() {
+        // 连击段位判定：
+        // - 若处于取消窗口内且本段已命中 → 进入下一段
+        // - 若未命中或超出窗口 → 重置为第一段
+        if (this.comboCancelTimer > 0 && this.hasHitThisAttack && this.comboStage < COMBO_STAGES.length) {
+            this.comboStage++;
+        } else {
+            this.comboStage = 1;
+        }
+
+        // 第三段后重置（打完三段回到第一段）
+        if (this.comboStage > COMBO_STAGES.length) {
+            this.comboStage = 1;
+        }
+
+        const stage = COMBO_STAGES[this.comboStage - 1];
+        this.state = 'attack';
+        this.stateTimer = 0;
+        this.attackCooldown = stage.totalFrames + 4;
+        this.attackActive = false;
+        this.hasHitThisAttack = false;
+        this.comboCancelTimer = 0;
+        this.comboResetTimer = stage.totalFrames + COMBO_CANCEL_WINDOW; // 超时重置
+
+        // 攻击时朝向微调
+        this.vx = this.facing * 2;
+
+        // 攻击积攒怒气
+        this.rage = Math.min(MAX_RAGE, this.rage + RAGE_ON_ATTACK);
+    }
+
+    handleAttack(input) {
+        this.vx *= 0.9;
+
+        const stage = COMBO_STAGES[this.comboStage - 1] || COMBO_STAGES[0];
+
+        // 攻击帧判定（按段位配置）
+        if (this.stateTimer >= stage.hitStart && this.stateTimer <= stage.hitEnd) {
+            this.attackActive = true;
+        } else {
+            this.attackActive = false;
+        }
+
+        // 连击取消：命中后在取消窗口内按下攻击键 → 进入下一段
+        if (input && input.attack && this.hasHitThisAttack &&
+            this.comboCancelTimer > 0 && this.comboStage < COMBO_STAGES.length) {
+            this.comboStage++;
+            this.state = 'attack';
+            this.stateTimer = 0;
+            this.attackCooldown = COMBO_STAGES[this.comboStage - 1].totalFrames + 4;
+            this.attackActive = false;
+            this.hasHitThisAttack = false;
+            this.comboCancelTimer = 0;
+            this.comboResetTimer = COMBO_STAGES[this.comboStage - 1].totalFrames + COMBO_CANCEL_WINDOW;
+            this.vx = this.facing * 2;
+            return;
+        }
+
+        // 攻击结束
+        if (this.stateTimer > stage.totalFrames) {
+            this.state = 'idle';
+            this.stateTimer = 0;
+            this.attackActive = false;
+        }
+    }
+
+    // 标记本段攻击已命中，开启取消窗口
+    onAttackHit() {
+        this.hasHitThisAttack = true;
+        this.comboCancelTimer = COMBO_CANCEL_WINDOW;
+        this.comboResetTimer = COMBO_CANCEL_WINDOW + 30; // 命中后延长重置时间
+    }
+
+    // 发射远程攻击弹幕
+    fireProjectile() {
+        this.projectileCooldown = PROJECTILE_COOLDOWN;
+        const px = this.x + this.width / 2 + this.facing * 20;
+        const py = this.y + 25;
+        projectiles.push(new Projectile(px, py, this.facing, this, this.colors.accent));
+        // 发射粒子特效
+        spawnParticles(px, py, 4, this.colors.accent, 2);
+    }
+
+    updateAttackHitbox() {
+        if (!this.attackActive) {
+            this.attackHitbox = null;
+            return;
+        }
+
+        const stage = COMBO_STAGES[this.comboStage - 1] || COMBO_STAGES[0];
+        const reach = this.attackRange + (this.comboStage - 1) * 8; // 后段攻击范围更大
+        const attackW = 30;
+        const attackH = 30 + (this.comboStage - 1) * 10; // 下劈攻击盒更高
+
+        const comboIdx = this.comboStage - 1;
+        const damage = this.comboDamage[comboIdx] || this.comboDamage[0];
+
+        this.attackHitbox = {
+            x: this.facing > 0 ? this.x + this.width / 2 : this.x - this.width / 2 - attackW,
+            y: this.y + 15,
+            width: attackW + reach,
+            height: attackH,
+            damage: damage,
+            knockback: stage.knockback,
+            knockdown: stage.knockdown
+        };
+    }
+
+    takeDamage(damage, attacker, options = {}) {
+        if (this.hp <= 0) return;
+
+        const knockback = options.knockback || KNOCKBACK_FORCE;
+        const knockdown = options.knockdown || false;
+
+        // 受击积攒怒气，且被禁锢时解除禁锢
+        this.rage = Math.min(MAX_RAGE, this.rage + RAGE_ON_HIT);
+        if (this.imprisonTimer > 0) { this.imprisonTimer = 0; }
+
+        // === 完美格挡（弹反）判定 ===
+        if (this.state === 'defend' && this.parryTimer > 0) {
+            // 弹反成功：伤害降为 0
+            this.parrySuccess = true;
+            this.parryTimer = 0;
+            this.hitStun = 0; // 自身无硬直
+
+            // 弹反特效（金色闪光）
+            spawnParticles(this.x + this.width / 2, this.y + 20, 12, '#f1c40f', 5);
+            spawnParticles(this.x + this.width / 2, this.y + 20, 6, '#fff', 3);
+
+            // 攻击者额外硬直
+            if (attacker) {
+                attacker.hitStun += PARRY_BONUS_STUN;
+                attacker.state = 'hit';
+                attacker.stateTimer = 0;
+                attacker.attackActive = false;
+                // 弹反把攻击者略微推开
+                const pushDir = attacker.x < this.x ? -1 : 1;
+                attacker.vx = pushDir * 3;
+            }
+
+            damageNumbers.push(new DamageNumber(this.x + this.width / 2, this.y, '弹反!'));
+            return;
+        }
+
+        // 普通防御减伤（使用武器防御值）
+        let actualDamage = damage;
+        if (this.state === 'defend') {
+            actualDamage = Math.max(1, damage - this.defenseValue);
+            spawnParticles(this.x, this.y + 20, 3, '#aaa', 2);
+        }
+
+        this.hp = Math.max(0, this.hp - actualDamage);
+
+        // 击退
+        const dir = attacker ? (this.x < attacker.x ? -1 : 1) : (this.x < WORLD_WIDTH / 2 ? 1 : -1);
+        this.vx = dir * knockback;
+        this.vy = -4;
+
+        // 状态切换
+        if (knockdown) {
+            // 第三段下劈：击倒
+            this.state = 'knockdown';
+            this.stateTimer = 0;
+            this.hitStun = 30;
+            this.knockdownTimer = 40;
+            this.comboStage = 0;
+            this.vy = -6; // 击飞更高
+            spawnParticles(this.x + this.width / 2, this.y + 30, 10, this.colors.dark, 4);
+        } else {
+            this.state = 'hit';
+            this.stateTimer = 0;
+            this.hitStun = 15;
+        }
+        this.attackActive = false;
+
+        // 特效
+        spawnHitParticles(this.x + this.width / 2, this.y + 20, this.colors.light);
+
+        // 伤害数字
+        damageNumbers.push(new DamageNumber(this.x + this.width / 2, this.y, actualDamage));
+    }
+
+    applyPhysics(platforms) {
+        this.vy += GRAVITY;
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // 上升时清除平台站立状态（允许从平台跳起）
+        if (this.vy < 0) {
+            this.platformStandingOn = null;
+        }
+
+        // 平台单向碰撞（从上方落下时承接）
+        if (platforms && this.vy >= 0) {
+            this.platformStandingOn = null;
+            const footY = this.y + this.height;
+            const footX = this.x + this.width / 2;
+            for (const p of platforms) {
+                if (p.checkLanding(this.prevFootY, footY, footX)) {
+                    this.y = p.y - this.height;
+                    this.vy = 0;
+                    this.platformStandingOn = p;
+                    break;
+                }
+            }
+        }
+
+        // 地面碰撞
+        if (this.y + this.height > GROUND_Y) {
+            this.y = GROUND_Y - this.height;
+            this.vy = 0;
+            this.platformStandingOn = null;
+        }
+
+        // 边界限制（大世界）
+        if (this.x < 20) { this.x = 20; this.vx = 0; }
+        if (this.x + this.width > WORLD_WIDTH - 20) { this.x = WORLD_WIDTH - 20 - this.width; this.vx = 0; }
+        // 上边界限制（不能飞出世界顶部）
+        if (this.y < WORLD_TOP) { this.y = WORLD_TOP; this.vy = 0; }
+    }
+
+    onGround() {
+        return this.y + this.height >= GROUND_Y - 2 || this.platformStandingOn !== null;
+    }
+
+    // ===================== 动画系统 =====================
+    updateAnimation() {
+        const t = this.stateTimer;
+        const f = this.facing;
+
+        // 重置偏移
+        this.headOffset = { x: 0, y: 0 };
+        this.bodyOffset = { x: 0, y: 0 };
+        this.armLOffset = { x: 0, y: 0 };
+        this.armROffset = { x: 0, y: 0 };
+        this.legLOffset = { x: 0, y: 0 };
+        this.legROffset = { x: 0, y: 0 };
+        this.weaponOffset = { x: 0, y: 0, angle: 0 };
+
+        switch (this.state) {
+            case 'idle':
+                this.bodyOffset.y = Math.sin(t * 0.1) * 1;
+                this.headOffset.y = Math.sin(t * 0.1) * 1 - 1;
+                this.armLOffset.y = Math.sin(t * 0.1 + 0.5) * 1;
+                this.armROffset.y = Math.sin(t * 0.1 + 1) * 1;
+                break;
+
+            case 'walk':
+                const walkCycle = Math.sin(t * 0.3) * 4;
+                this.legLOffset.x = walkCycle;
+                this.legROffset.x = -walkCycle;
+                this.armLOffset.x = -walkCycle * 0.5;
+                this.armROffset.x = walkCycle * 0.5;
+                this.bodyOffset.y = Math.abs(Math.sin(t * 0.3)) * 2;
+                break;
+
+            case 'jump':
+                this.bodyOffset.y = -3;
+                this.armLOffset.y = -5;
+                this.armROffset.y = -5;
+                this.legLOffset.y = 3;
+                this.legROffset.y = 3;
+                break;
+
+            case 'attack':
+                // 三段连击动画差异：段位越高挥击幅度越大
+                const attackProgress = t / (COMBO_STAGES[this.comboStage - 1]?.totalFrames || 20);
+                if (this.comboStage === 2) {
+                    // 第二段横斩：水平挥击
+                    if (attackProgress < 0.4) {
+                        this.bodyOffset.x = f * -5;
+                        this.armROffset.x = f * -8;
+                        this.weaponOffset.angle = f * -45;
+                    } else {
+                        this.bodyOffset.x = f * 10;
+                        this.armROffset.x = f * 18;
+                        this.weaponOffset.angle = f * 90;
+                    }
+                } else if (this.comboStage === 3) {
+                    // 第三段下劈：高举后下劈
+                    if (attackProgress < 0.5) {
+                        this.armROffset.y = -10;
+                        this.armROffset.x = f * 3;
+                        this.weaponOffset.angle = f * -120;
+                        this.bodyOffset.y = -3;
+                    } else {
+                        this.bodyOffset.y = 6;
+                        this.armROffset.x = f * 12;
+                        this.weaponOffset.angle = f * 150;
+                    }
+                } else {
+                    // 第一段平砍
+                    if (attackProgress < 0.5) {
+                        this.bodyOffset.x = f * 3;
+                        this.armROffset.x = f * 5;
+                        this.weaponOffset.angle = f * -30;
+                    } else {
+                        this.bodyOffset.x = f * 8;
+                        this.armROffset.x = f * 15;
+                        this.weaponOffset.angle = f * 60;
+                    }
+                }
+                break;
+
+            case 'defend':
+                this.armLOffset.x = f * 8;
+                this.armLOffset.y = -3;
+                this.bodyOffset.x = f * -2;
+                // 弹反窗口期：盾牌发光
+                if (this.parryTimer > 0) {
+                    this.bodyOffset.y = -1; // 微微前倾
+                }
+                break;
+
+            case 'hit':
+                this.bodyOffset.x = (this.x < WORLD_WIDTH / 2 ? -1 : 1) * 3;
+                this.bodyOffset.y = -2;
+                break;
+
+            case 'knockdown':
+                // 倒地动画
+                this.bodyOffset.y = 15;
+                this.headOffset.x = f * 8;
+                this.headOffset.y = 8;
+                break;
+
+            case 'imprisoned':
+                // 被禁锢：抖动挣扎
+                this.bodyOffset.x = (Math.random() - 0.5) * 2;
+                this.bodyOffset.y = (Math.random() - 0.5) * 1;
+                break;
+
+            case 'dead':
+                this.bodyOffset.y = 20;
+                this.headOffset.x = f * 5;
+                break;
+        }
+    }
+
+    // ===================== 渲染 =====================
+    draw(ctx) {
+        ctx.save();
+
+        // 受击闪烁
+        if (this.hitStun > 0 && this.hitStun % 4 < 2) {
+            ctx.globalAlpha = 0.6;
+        }
+
+        const x = this.x + this.width / 2;
+        const y = this.y;
+        const f = this.facing;
+        const c = this.colors;
+
+        if (this.state === 'dead') {
+            this.drawDead(ctx, x, y, f, c);
+        } else {
+            this.drawAlive(ctx, x, y, f, c);
+
+            // === 喷气飞行火焰特效 ===
+            if (this.isJetting) {
+                const flameX = x;
+                const flameY = this.y + this.height;
+                const flicker = 0.6 + Math.random() * 0.4;
+                ctx.globalAlpha = flicker;
+                // 外层火焰（橙色）
+                drawPixelRect(ctx, flameX - 6, flameY, 12, 8 + Math.random() * 6, '#ff6600');
+                // 内层火焰（黄色）
+                drawPixelRect(ctx, flameX - 3, flameY, 6, 4 + Math.random() * 4, '#ffcc00');
+                // 核心高光（白色）
+                drawPixelRect(ctx, flameX - 1, flameY, 2, 2 + Math.random() * 2, '#fff');
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        ctx.restore();
+    }
+
+    drawAlive(ctx, x, y, f, c) {
+        const bo = this.bodyOffset;
+        const ho = this.headOffset;
+        const aoL = this.armLOffset;
+        const aoR = this.armROffset;
+        const loL = this.legLOffset;
+        const loR = this.legROffset;
+        const wo = this.weaponOffset;
+
+        // === 腿部 ===
+        // 左腿
+        drawPixelRect(ctx, x - 12 + loL.x, y + 40 + loL.y, 10, 24, c.dark);
+        drawPixelRect(ctx, x - 10 + loL.x, y + 42 + loL.y, 6, 20, c.primary);
+        // 右腿
+        drawPixelRect(ctx, x + 2 + loR.x, y + 40 + loR.y, 10, 24, c.dark);
+        drawPixelRect(ctx, x + 4 + loR.x, y + 42 + loR.y, 6, 20, c.primary);
+
+        // === 身体 ===
+        const bx = x + bo.x;
+        const by = y + 18 + bo.y;
+        // 身体主体
+        drawPixelRect(ctx, bx - 16, by, 32, 26, c.primary);
+        drawPixelRect(ctx, bx - 14, by + 2, 28, 22, c.light);
+        // 胸部细节
+        drawPixelRect(ctx, bx - 8, by + 6, 16, 10, c.dark);
+        drawPixelRect(ctx, bx - 6, by + 8, 12, 6, c.accent);
+        // 核心发光
+        drawPixelRect(ctx, bx - 3, by + 10, 6, 4, c.eye);
+
+        // === 头部 ===
+        const hx = x + ho.x;
+        const hy = y - 6 + ho.y;
+        // 头部主体
+        drawPixelRect(ctx, hx - 12, hy, 24, 18, c.primary);
+        drawPixelRect(ctx, hx - 10, hy + 2, 20, 14, c.light);
+        // 天线
+        drawPixelRect(ctx, hx - 14, hy - 4, 4, 6, c.dark);
+        drawPixelRect(ctx, hx - 13, hy - 6, 2, 4, c.eye);
+        // 面罩
+        drawPixelRect(ctx, hx - 10, hy + 4, 20, 10, c.dark);
+        // 眼睛
+        const eyeX = f > 0 ? hx + 2 : hx - 8;
+        drawPixelRect(ctx, eyeX, hy + 6, 6, 4, c.eye);
+        drawPixelRect(ctx, eyeX + 1, hy + 7, 2, 2, '#fff');
+
+        // === 左臂 ===
+        const aLx = x - 18 + aoL.x;
+        const aLy = y + 22 + aoL.y;
+        drawPixelRect(ctx, aLx, aLy, 10, 18, c.dark);
+        drawPixelRect(ctx, aLx + 2, aLy + 2, 6, 14, c.primary);
+        // 手
+        drawPixelRect(ctx, aLx, aLy + 16, 10, 6, c.joint);
+
+        // 剑盾：左臂常驻盾牌
+        if (this.weaponKey === 'swordShield') {
+            const shX = f > 0 ? aLx - 12 : aLx + 10;
+            drawPixelRect(ctx, shX, aLy - 2, 12, 26, c.dark);
+            drawPixelRect(ctx, shX + 2, aLy, 8, 22, c.light);
+            drawPixelRect(ctx, shX + 3, aLy + 4, 6, 14, c.primary);
+        }
+
+        // === 右臂（持武器） ===
+        const aRx = x + 8 + aoR.x;
+        const aRy = y + 20 + aoR.y;
+        drawPixelRect(ctx, aRx, aRy, 10, 18, c.dark);
+        drawPixelRect(ctx, aRx + 2, aRy + 2, 6, 14, c.primary);
+
+        // 武器绘制（根据武器类型显示不同形状）
+        this.drawWeapon(ctx, aRx, aRy, f, c, wo);
+
+        // 防御姿态（非剑盾的格挡动画）
+        if (this.state === 'defend' && this.weaponKey !== 'swordShield') {
+            const sx = f > 0 ? x + 12 : x - 28;
+            const isParry = this.parryTimer > 0;
+            const shieldMain = isParry ? '#f1c40f' : c.dark;
+            const shieldLight = isParry ? '#f7dc6f' : c.light;
+            const shieldAccent = isParry ? '#fff' : c.primary;
+
+            if (isParry) {
+                ctx.globalAlpha = 0.3 + Math.sin(Date.now() * 0.05) * 0.2;
+                drawPixelRect(ctx, sx - 3, y + 12, 22, 36, '#f1c40f');
+                ctx.globalAlpha = 1;
+            }
+
+            drawPixelRect(ctx, sx, y + 15, 16, 30, shieldMain);
+            drawPixelRect(ctx, sx + 2, y + 17, 12, 26, shieldLight);
+            drawPixelRect(ctx, sx + 5, y + 22, 6, 16, shieldAccent);
+        }
+
+        // 剑盾防御姿态（左臂盾牌举起挡在身前）
+        if (this.state === 'defend' && this.weaponKey === 'swordShield') {
+            const isParry = this.parryTimer > 0;
+            const shX = f > 0 ? x + 2 : x - 18;
+            const shMain = isParry ? '#f1c40f' : c.dark;
+            const shLight = isParry ? '#f7dc6f' : c.light;
+
+            if (isParry) {
+                ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.06) * 0.2;
+                drawPixelRect(ctx, shX - 4, y + 10, 24, 38, '#f1c40f');
+                ctx.globalAlpha = 1;
+            }
+
+            drawPixelRect(ctx, shX, y + 12, 16, 34, shMain);
+            drawPixelRect(ctx, shX + 2, y + 14, 12, 30, shLight);
+            drawPixelRect(ctx, shX + 4, y + 18, 8, 22, isParry ? '#fff' : c.primary);
+        }
+    }
+
+    // === 根据武器类型绘制不同武器形状 ===
+    drawWeapon(ctx, aRx, aRy, f, c, wo) {
+        if (this.state === 'attack') {
+            ctx.save();
+            ctx.translate(aRx + 5, aRy + 8);
+            ctx.rotate((wo.angle * Math.PI) / 180);
+            const bladeColor = this.comboStage === 3 ? '#e74c3c' : (this.comboStage === 2 ? '#f39c12' : '#fff');
+            const glowColor = this.comboStage === 3 ? '#c0392b' : (this.comboStage === 2 ? '#e67e22' : c.accent);
+
+            if (this.weaponKey === 'dagger') {
+                // 短刀：短小精悍的匕首
+                drawPixelRect(ctx, -2, 0, 4, 8, c.joint);          // 刀柄
+                drawPixelRect(ctx, -1, -12, 2, 14, bladeColor);      // 刀刃（短）
+                drawPixelRect(ctx, -3, -10, 6, 10, glowColor);        // 发光
+                drawPixelRect(ctx, -1, -13, 2, 2, '#fff');            // 刀尖
+            } else if (this.weaponKey === 'spear') {
+                // 长枪：细长的枪杆+宽枪头
+                drawPixelRect(ctx, -1, 0, 2, 10, '#8B4513');          // 木质枪杆
+                drawPixelRect(ctx, -4, -30, 8, 8, bladeColor);        // 枪头（宽）
+                drawPixelRect(ctx, -2, -38, 4, 10, bladeColor);       // 枪尖（长）
+                drawPixelRect(ctx, -6, -28, 12, 4, glowColor);        // 枪头发光
+                drawPixelRect(ctx, -1, -40, 2, 4, '#fff');            // 枪尖高光
+            } else {
+                // 剑盾：单手剑+盾（右手持剑）
+                drawPixelRect(ctx, -2, 0, 4, 10, c.joint);          // 剑柄
+                const bladeLen = 18 + (this.comboStage - 1) * 4;
+                drawPixelRect(ctx, -1, -bladeLen, 2, bladeLen, bladeColor);       // 剑刃
+                drawPixelRect(ctx, -3, -bladeLen + 2, 6, bladeLen - 4, glowColor); // 发光
+                drawPixelRect(ctx, -1, -bladeLen - 2, 2, 3, '#fff');              // 剑尖
+            }
+            ctx.restore();
+        } else {
+            // 非攻击状态：手持武器待机
+            if (this.weaponKey === 'dagger') {
+                // 短刀：倒持匕首
+                const wx = f > 0 ? aRx + 8 : aRx - 2;
+                const wy = aRy + 14;
+                drawPixelRect(ctx, wx, wy, 3, 8, c.joint);           // 柄
+                drawPixelRect(ctx, wx, wy - 10, 3, 12, '#ccc');       // 刃
+                drawPixelRect(ctx, wx + 1, wy - 12, 1, 2, '#fff');    // 尖
+            } else if (this.weaponKey === 'spear') {
+                // 长枪：斜扛在肩上
+                const wx = f > 0 ? aRx + 6 : aRx - 4;
+                const wy = aRy - 20;
+                drawPixelRect(ctx, wx, wy, 2, 40, '#8B4513');         // 长杆
+                drawPixelRect(ctx, wx - 2, wy - 2, 6, 6, c.accent);   // 枪头
+                drawPixelRect(ctx, wx - 1, wy - 6, 4, 6, c.accent);   // 枪尖
+            } else {
+                // 剑盾：右手持剑下垂
+                const wx = f > 0 ? aRx + 6 : aRx - 2;
+                const wy = aRy + 12;
+                drawPixelRect(ctx, wx, wy, 3, 8, c.joint);           // 剑柄
+                drawPixelRect(ctx, wx, wy - 14, 3, 16, '#ccc');       // 剑身
+                drawPixelRect(ctx, wx + 1, wy - 16, 1, 2, '#fff');    // 剑尖
+            }
+        }
+    }
+
+    drawDead(ctx, x, y, f, c) {
+        // 倒下的机甲
+        ctx.save();
+        ctx.translate(x, y + 50);
+        ctx.rotate(f > 0 ? Math.PI / 2 : -Math.PI / 2);
+
+        // 身体
+        drawPixelRect(ctx, -16, -13, 32, 26, c.primary);
+        drawPixelRect(ctx, -14, -11, 28, 22, c.dark);
+        // 头
+        drawPixelRect(ctx, -12, -31, 24, 18, c.primary);
+        drawPixelRect(ctx, -10, -29, 20, 14, c.dark);
+        // 眼睛熄灭
+        drawPixelRect(ctx, f > 0 ? 2 : -8, -25, 6, 4, '#333');
+        // 手臂
+        drawPixelRect(ctx, -26, -11, 10, 18, c.dark);
+        drawPixelRect(ctx, 16, -11, 10, 18, c.dark);
+        // 腿
+        drawPixelRect(ctx, -12, 13, 10, 20, c.dark);
+        drawPixelRect(ctx, 2, 13, 10, 20, c.dark);
+
+        ctx.restore();
+    }
+}
+
+// ===================== 伤害数字 =====================
+class DamageNumber {
+    constructor(x, y, damage) {
+        this.x = x;
+        this.y = y;
+        this.damage = damage;
+        this.life = 40;
+        this.vy = -2;
+        this.isText = typeof damage === 'string';
+    }
+
+    update() {
+        this.y += this.vy;
+        this.vy += 0.05;
+        this.life--;
+    }
+
+    draw(ctx) {
+        const alpha = Math.min(1, this.life / 20);
+        ctx.globalAlpha = alpha;
+        if (this.isText) {
+            drawPixelText(ctx, this.damage, this.x, this.y, 22, '#f1c40f');
+        } else {
+            drawPixelText(ctx, this.damage.toString(), this.x, this.y, 20,
+                this.damage > 10 ? '#e74c3c' : '#f39c12');
+        }
+        ctx.globalAlpha = 1;
+    }
+}
+
+let damageNumbers = [];
+let projectiles = [];   // 远程攻击弹幕
+let platforms = [];    // 悬浮平台
+let barrels = [];      // 木桶
+let afterimages = [];       // 闪现残影
+let cageEffects = [];       // 禁锢笼子效果
+let superProjectiles = [];  // 超大范围远程弹幕
+
+// ===================== 残影/禁锢笼子绘制 =====================
+function drawAfterimage(ctx, a) {
+    const alpha = (a.timer / a.maxTimer) * 0.4;
+    ctx.globalAlpha = alpha;
+    const x = a.x + 20; // width/2
+    const y = a.y;
+    const f = a.facing;
+    const c = a.colors;
+    // 简化机甲轮廓
+    drawPixelRect(ctx, x - 16, y + 18, 32, 26, c.primary);
+    drawPixelRect(ctx, x - 12, y - 6, 24, 18, c.primary);
+    drawPixelRect(ctx, x - 12, y + 40, 10, 24, c.dark);
+    drawPixelRect(ctx, x + 2, y + 40, 10, 24, c.dark);
+    ctx.globalAlpha = 1;
+}
+
+function drawCage(ctx, cage) {
+    const cx = cage.target.x + cage.target.width / 2;
+    const cy = cage.target.y + cage.target.height / 2;
+    const w = 50;
+    const h = 74;
+    const left = cx - w / 2;
+    const top = cy - h / 2;
+    const shake = (cage.maxTimer - cage.timer) < 15 ? (Math.random() - 0.5) * 2 : 0;
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.7 + Math.sin(Date.now() * 0.01) * 0.2;
+    // 笼子边框
+    ctx.strokeRect(left + shake, top, w, h);
+    // 竖条
+    for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(left + (w / 4) * i + shake, top);
+        ctx.lineTo(left + (w / 4) * i + shake, top + h);
+        ctx.stroke();
+    }
+    // 横条
+    for (let i = 1; i < 5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(left + shake, top + (h / 5) * i);
+        ctx.lineTo(left + w + shake, top + (h / 5) * i);
+        ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+}
+
+// ===================== 场景绘制 =====================
+function drawBackground(ctx, cameraX = 0, cameraY = 0) {
+    const viewLeft = cameraX;
+    const viewRight = cameraX + canvas.width;
+    const viewTop = cameraY;
+    const viewBottom = cameraY + canvas.height;
+
+    // === 天空渐变（明亮白天：天蓝 → 粉蓝 → 近白） ===
+    const gradient = ctx.createLinearGradient(viewLeft, viewTop, viewLeft, viewBottom);
+    gradient.addColorStop(0, '#87CEEB');
+    gradient.addColorStop(0.5, '#B0E0E6');
+    gradient.addColorStop(1, '#E0F0FF');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(viewLeft, viewTop, canvas.width, canvas.height);
+
+    // === 远处浅色山脉轮廓（视差层，移动速度为摄像机的0.1倍） ===
+    ctx.fillStyle = 'rgba(180, 200, 210, 0.6)';
+    const mountainOffset = cameraX * 0.1;
+    const mountainBaseY = GROUND_Y - 80 + cameraY;
+    for (let i = -1; i < Math.ceil(canvas.width / 200) + 2; i++) {
+        const mx = i * 200 - (mountainOffset % 200);
+        const mh = 60 + ((i * 73 + 31) % 80);
+        ctx.beginPath();
+        ctx.moveTo(mx - 40, mountainBaseY);
+        ctx.lineTo(mx + 60, mountainBaseY - mh);
+        ctx.lineTo(mx + 160, mountainBaseY);
+        ctx.fill();
+    }
+    // 更近一层的山脉
+    ctx.fillStyle = 'rgba(160, 185, 195, 0.5)';
+    const mountain2Offset = cameraX * 0.2;
+    const mountain2BaseY = GROUND_Y - 40 + cameraY;
+    for (let i = -1; i < Math.ceil(canvas.width / 160) + 2; i++) {
+        const mx = i * 160 - (mountain2Offset % 160);
+        const mh = 40 + ((i * 53 + 17) % 60);
+        ctx.beginPath();
+        ctx.moveTo(mx - 30, mountain2BaseY);
+        ctx.lineTo(mx + 50, mountain2BaseY - mh);
+        ctx.lineTo(mx + 130, mountain2BaseY);
+        ctx.fill();
+    }
+
+    // === 白色云朵（远近层次，视差移动） ===
+    // 远处云层（小云，慢速移动）
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    const cloudOffset1 = cameraX * 0.05;
+    for (let i = 0; i < 8; i++) {
+        const cx = ((i * 251 + 100) % 1200) - cloudOffset1 % 1200;
+        const cy = WORLD_TOP + 30 + (i * 47) % 120;
+        if (cx > -120 && cx < canvas.width + 120 && cy > viewTop - 30 && cy < viewBottom) {
+            // 云朵由多个矩形组合
+            ctx.fillRect(cx, cy, 40, 12);
+            ctx.fillRect(cx + 8, cy - 6, 24, 6);
+            ctx.fillRect(cx + 4, cy + 12, 32, 8);
+        }
+    }
+    // 近处云层（大云，中速移动）
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    const cloudOffset2 = cameraX * 0.15;
+    for (let i = 0; i < 6; i++) {
+        const cx = ((i * 317 + 200) % 1400) - cloudOffset2 % 1400;
+        const cy = WORLD_TOP + 80 + (i * 59) % 150;
+        if (cx > -150 && cx < canvas.width + 150 && cy > viewTop - 40 && cy < viewBottom) {
+            ctx.fillRect(cx, cy, 60, 16);
+            ctx.fillRect(cx + 12, cy - 10, 36, 10);
+            ctx.fillRect(cx + 6, cy + 16, 48, 10);
+            ctx.fillRect(cx + 20, cy - 18, 20, 8);
+        }
+    }
+
+    // === 远景浅色建筑轮廓（视差层0.3） ===
+    ctx.fillStyle = 'rgba(200, 210, 220, 0.5)';
+    const buildingSpacing = 110;
+    const buildingCount = Math.ceil(WORLD_WIDTH / buildingSpacing) + 1;
+    const buildingParallax = cameraX * 0.3;
+    for (let i = 0; i < buildingCount; i++) {
+        const bx = i * buildingSpacing - buildingParallax;
+        if (bx + 80 < 0 || bx > canvas.width) continue;
+        const bh = 80 + (i * 37) % 120;
+        const by = GROUND_Y - bh + cameraY;
+        ctx.fillRect(bx, by, 50 + (i % 3) * 20, bh + cameraY);
+        // 窗户（浅色）
+        ctx.fillStyle = 'rgba(220, 230, 240, 0.5)';
+        for (let w = 0; w < 3; w++) {
+            for (let h = 0; h < Math.floor(bh / 20); h++) {
+                if ((w + h + i) % 3 === 0) {
+                    ctx.fillRect(bx + 8 + w * 14, by + 8 + h * 18, 8, 10);
+                }
+            }
+        }
+        ctx.fillStyle = 'rgba(200, 210, 220, 0.5)';
+    }
+
+    // === 地面（绿色草地 + 棕色泥土层） ===
+    const groundScreenY = GROUND_Y + cameraY;
+    // 绿色草地表面
+    ctx.fillStyle = '#4a8c3f';
+    ctx.fillRect(viewLeft, groundScreenY, canvas.width, 10);
+    // 草地像素纹理
+    ctx.fillStyle = '#3d7a34';
+    const grassStartX = Math.floor(viewLeft / 8) * 8;
+    for (let i = grassStartX; i < viewRight + 8; i += 8) {
+        const gh = 2 + ((i * 3) % 4);
+        ctx.fillRect(i, groundScreenY - gh, 3, gh);
+    }
+    // 棕色泥土层
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(viewLeft, groundScreenY + 10, canvas.width, canvas.height - groundScreenY - 10);
+    // 泥土纹理
+    ctx.fillStyle = '#7a5c12';
+    const dirtStartX = Math.floor(viewLeft / 24) * 24;
+    for (let i = dirtStartX; i < viewRight + 24; i += 24) {
+        for (let j = 0; j < 4; j++) {
+            const dx = i + (j * 11) % 24;
+            const dy = groundScreenY + 18 + (j * 17) % 60;
+            ctx.fillRect(dx, dy, 5, 3);
+        }
+    }
+}
+
+// ===================== UI绘制 =====================
+function drawUI(ctx, mecha1, mecha2, isSplitScreen) {
+    if (isSplitScreen) {
+        const halfW = canvas.width / 2;
+
+        // 左半屏：只显示玩家1的UI
+        drawHealthBar(ctx, 16, 14, 160, 18, mecha1.hp, mecha1.maxHp,
+            '#3498db', 'P1 ' + mecha1.weapon.name);
+        drawComboIndicator(ctx, mecha1, 16, 40, '#3498db');
+        drawRangedCooldown(ctx, mecha1, 16, 56, '#3498db');
+        drawPixelText(ctx, '怒气', 16, 70, 10, '#888', 'left');
+        drawRageIcon(ctx, 46, 65, mecha1.rage >= 1);
+        drawRageIcon(ctx, 60, 65, mecha1.rage >= 2);
+        drawJetFuelBar(ctx, 16, 76, mecha1);
+
+        // 右半屏：只显示玩家2的UI
+        const rightBase = halfW + 16;
+        const p2SplitLabel = (typeof game !== 'undefined' && game.gameMode === 'pve') ? 'Bot ' + mecha2.weapon.name : 'P2 ' + mecha2.weapon.name;
+        drawHealthBar(ctx, rightBase, 14, 160, 18, mecha2.hp, mecha2.maxHp,
+            '#e74c3c', p2SplitLabel);
+        drawComboIndicator(ctx, mecha2, rightBase, 40, '#e74c3c');
+        drawRangedCooldown(ctx, mecha2, rightBase, 56, '#e74c3c');
+        drawPixelText(ctx, '怒气', rightBase, 70, 10, '#888', 'left');
+        drawRageIcon(ctx, rightBase + 30, 65, mecha2.rage >= 1);
+        drawRageIcon(ctx, rightBase + 44, 65, mecha2.rage >= 2);
+        drawJetFuelBar(ctx, rightBase, 76, mecha2);
+    } else {
+        // 玩家1血条（左上）
+        drawHealthBar(ctx, 30, 20, 300, 24, mecha1.hp, mecha1.maxHp,
+            '#3498db', '玩家1 (' + mecha1.weapon.name + ')');
+
+        // 玩家2血条（右上）
+        const p2Label = (typeof game !== 'undefined' && game.gameMode === 'pve') ? 'AI Bot (' + mecha2.weapon.name + ')' : '玩家2 (' + mecha2.weapon.name + ')';
+        drawHealthBar(ctx, canvas.width - 330, 20, 300, 24, mecha2.hp, mecha2.maxHp,
+            '#e74c3c', p2Label, true);
+
+        // VS标志
+        drawPixelText(ctx, 'VS', canvas.width / 2, 32, 28, '#f1c40f');
+
+        // 连击段位指示
+        drawComboIndicator(ctx, mecha1, 30, 55, '#3498db');
+        drawComboIndicator(ctx, mecha2, canvas.width - 330, 55, '#e74c3c');
+
+        // 远程攻击冷却指示
+        drawRangedCooldown(ctx, mecha1, 30, 75, '#3498db');
+        drawRangedCooldown(ctx, mecha2, canvas.width - 330, 75, '#e74c3c');
+
+        // 怒气图标
+        drawPixelText(ctx, '怒气', 30, 90, 10, '#888', 'left');
+        drawRageIcon(ctx, 60, 85, mecha1.rage >= 1);
+        drawRageIcon(ctx, 76, 85, mecha1.rage >= 2);
+
+        // P1气泵条（怒气下方）
+        drawJetFuelBar(ctx, 30, 100, mecha1);
+
+        // P2怒气（右上）
+        drawRageIcon(ctx, canvas.width - 76, 85, mecha2.rage >= 1);
+        drawRageIcon(ctx, canvas.width - 60, 85, mecha2.rage >= 2);
+
+        // P2气泵条（怒气下方）
+        drawJetFuelBar(ctx, canvas.width - 130, 100, mecha2);
+    }
+}
+
+// 连击段位指示器
+function drawComboIndicator(ctx, mecha, x, y, color) {
+    if (mecha.comboStage > 0) {
+        const stageNames = ['', '平砍', '横斩', '下劈'];
+        const name = stageNames[mecha.comboStage] || '平砍';
+        drawPixelText(ctx, `连击 ${mecha.comboStage}/3 ${name}`, x, y, 12, color, 'left');
+        // 连击点
+        for (let i = 0; i < 3; i++) {
+            ctx.fillStyle = i < mecha.comboStage ? color : '#333';
+            ctx.fillRect(x + 90 + i * 12, y - 4, 8, 8);
+        }
+    }
+}
+
+// 弹反窗口提示
+function drawParryIndicator(ctx, mecha) {
+    if (mecha.parryTimer > 0) {
+        const px = mecha.x + mecha.width / 2;
+        const py = mecha.y - 25;
+        drawPixelText(ctx, '弹反!', px, py, 14, '#f1c40f');
+    }
+    if (mecha.parrySuccess) {
+        const px = mecha.x + mecha.width / 2;
+        const py = mecha.y - 40;
+        drawPixelText(ctx, 'PARRY!', px, py, 18, '#f1c40f');
+    }
+}
+
+// 远程攻击冷却指示
+function drawRangedCooldown(ctx, mecha, x, y, color) {
+    drawPixelText(ctx, '远程', x, y, 10, '#888', 'left');
+    const cdMax = PROJECTILE_COOLDOWN;
+    const cdRemain = mecha.projectileCooldown;
+    const barW = 60;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(x + 25, y - 4, barW, 6);
+    ctx.fillStyle = cdRemain <= 0 ? color : '#555';
+    ctx.fillRect(x + 25, y - 4, barW * (1 - cdRemain / cdMax), 6);
+}
+
+// 怒气图标（火焰图标，点亮表示怒气满）
+function drawRageIcon(ctx, x, y, filled) {
+    const c = filled ? '#f39c12' : '#333';
+    const c2 = filled ? '#f1c40f' : '#222';
+    ctx.fillStyle = c;
+    ctx.fillRect(x + 2, y, 4, 2);
+    ctx.fillRect(x + 1, y + 2, 6, 2);
+    ctx.fillRect(x, y + 4, 8, 2);
+    ctx.fillRect(x + 1, y + 6, 6, 2);
+    ctx.fillRect(x + 3, y + 8, 2, 2);
+    if (filled) {
+        ctx.fillStyle = c2;
+        ctx.fillRect(x + 3, y + 1, 2, 2);
+        ctx.fillRect(x + 2, y + 3, 2, 2);
+    }
+}
+
+// 气泵条（喷气飞行能量条）
+function drawJetFuelBar(ctx, x, y, mecha) {
+    drawPixelText(ctx, '气泵', x, y + 4, 10, '#888', 'left');
+    const barW = 80;
+    const barH = 8;
+    const barX = x + 30;
+    const barY = y;
+    const ratio = mecha.jetFuel / JET_MAX;
+    // 背景框
+    ctx.fillStyle = '#333';
+    ctx.fillRect(barX, barY, barW, barH);
+    // 颜色：满时绿色，使用中橙色，空时红色
+    let barColor;
+    if (ratio > 0.5) {
+        barColor = '#2ecc71';  // 绿色
+    } else if (ratio > 0.15) {
+        barColor = '#f39c12';  // 橙色
+    } else {
+        barColor = '#e74c3c';  // 红色
+    }
+    ctx.fillStyle = barColor;
+    ctx.fillRect(barX, barY, barW * ratio, barH);
+    // 边框
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX, barY, barW, barH);
+}
+
+function drawHealthBar(ctx, x, y, width, height, hp, maxHp, color, label, rightAlign = false) {
+    // 背景
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(x, y, width, height);
+
+    // 血量
+    const hpPercent = hp / maxHp;
+    const hpWidth = width * hpPercent;
+    ctx.fillStyle = hpPercent > 0.3 ? color : '#e74c3c';
+    ctx.fillRect(x, y, hpWidth, height);
+
+    // 边框
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, width, height);
+
+    // 标签
+    drawPixelText(ctx, `${label} ${hp}/${maxHp}`,
+        rightAlign ? x + width - 10 : x + 10, y + height / 2, 14, '#fff',
+        rightAlign ? 'right' : 'left');
+}
+
+// ===================== 游戏主类 =====================
+class Game {
+    constructor() {
+        this.state = 'menu'; // menu, modeSelect, playing, gameover
+        this.menuMode = 'modeSelect'; // modeSelect(选模式) 或 weaponSelect(选武器)
+        this.gameMode = 'pvp'; // 'pvp' 或 'pve'
+        this.camera = new Camera();
+        this.p1WeaponIdx = 0;  // 玩家1武器索引
+        this.p2WeaponIdx = 0;  // 玩家2武器索引
+        this.mecha1 = new Mecha(300, true, WEAPON_KEYS[0]);
+        this.mecha2 = new Mecha(700, false, WEAPON_KEYS[0]);
+        this.winner = null;
+        this.gameOverTimer = 0;
+        this.isSplitScreen = false;  // 是否分屏模式
+        // Bot AI 相关
+        this.botInput = { left:false, right:false, jump:false, attack:false, defend:false, ranged:false, flash:false, imprison:false, ultimate:false, jet:false };
+        this.botThinkTimer = 0;
+        this.botActionTimer = 0;
+        this.botCurrentAction = 'idle';
+        this.initPlatforms();
+    }
+
+    // 初始化少量有特色的平台 + 2个木桶
+    initPlatforms() {
+        platforms = [
+            // 左侧区域
+            new Platform(350, 360, 160),
+            new Platform(850, 260, 150),
+            // 中间区域
+            new Platform(1600, 320, 170),
+            new Platform(2200, 180, 190),
+            // 右侧区域
+            new Platform(3000, 340, 160),
+            new Platform(3500, 220, 180),
+        ];
+        // 地面放置两个木桶
+        barrels = [
+            new Barrel(500),
+            new Barrel(2500)
+        ];
+    }
+
+    // 木桶爆炸后在世界范围内随机重生（可在地面或平台上）
+    spawnBarrelRandomly() {
+        const groundChance = 0.4; // 40%概率出现在地面
+        if (Math.random() < groundChance || platforms.length === 0) {
+            // 地面位置
+            const x = 80 + Math.random() * (WORLD_WIDTH - 160);
+            return new Barrel(x);
+        } else {
+            // 随机选一个平台，放在平台上
+            const p = platforms[Math.floor(Math.random() * platforms.length)];
+            const x = p.x + 10 + Math.random() * (p.width - 40);
+            return new Barrel(x, p.y - 32);
+        }
+    }
+
+    reset() {
+        this.camera.reset();
+        this.mecha1 = new Mecha(300, true, WEAPON_KEYS[this.p1WeaponIdx]);
+        this.mecha2 = new Mecha(700, false, WEAPON_KEYS[this.p2WeaponIdx]);
+        this.winner = null;
+        this.gameOverTimer = 0;
+        particles.length = 0;
+        damageNumbers = [];
+        projectiles = [];
+        barrels = [];
+        afterimages = [];
+        cageEffects = [];
+        superProjectiles = [];
+        this.initPlatforms();
+    }
+
+    update() {
+        Input.update();
+
+        if (this.state === 'menu') {
+            if (this.menuMode === 'modeSelect') {
+                // 模式选择阶段：1=单机模式, 2=多人模式
+                if (Input.isPressed('1')) {
+                    this.gameMode = 'pve';
+                    this.menuMode = 'weaponSelect';
+                }
+                if (Input.isPressed('2')) {
+                    this.gameMode = 'pvp';
+                    this.menuMode = 'weaponSelect';
+                }
+            } else if (this.menuMode === 'weaponSelect') {
+                // 武器选择阶段
+                // 玩家1用Q/E
+                if (Input.isPressed('q') || Input.isPressed('Q')) {
+                    this.p1WeaponIdx = (this.p1WeaponIdx - 1 + WEAPON_KEYS.length) % WEAPON_KEYS.length;
+                }
+                if (Input.isPressed('e') || Input.isPressed('E')) {
+                    this.p1WeaponIdx = (this.p1WeaponIdx + 1) % WEAPON_KEYS.length;
+                }
+                // PVP模式玩家2用7/8，PVE模式Bot自动随机选武器
+                if (this.gameMode === 'pvp') {
+                    if (Input.isPressed('7')) {
+                        this.p2WeaponIdx = (this.p2WeaponIdx - 1 + WEAPON_KEYS.length) % WEAPON_KEYS.length;
+                    }
+                    if (Input.isPressed('8')) {
+                        this.p2WeaponIdx = (this.p2WeaponIdx + 1) % WEAPON_KEYS.length;
+                    }
+                }
+                // 空格开始游戏
+                if (Input.isPressed(' ')) {
+                    // PVE模式Bot随机选武器
+                    if (this.gameMode === 'pve') {
+                        this.p2WeaponIdx = Math.floor(Math.random() * WEAPON_KEYS.length);
+                    }
+                    this.state = 'playing';
+                    this.reset();
+                }
+                // ESC返回模式选择
+                if (Input.isPressed('Escape')) {
+                    this.menuMode = 'modeSelect';
+                }
+            }
+            return;
+        }
+
+        if (this.state === 'gameover') {
+            this.gameOverTimer++;
+            if (this.gameOverTimer > 60 && Input.isPressed(' ')) {
+                this.state = 'menu';
+                this.menuMode = 'modeSelect';
+            }
+            // 继续更新粒子和伤害数字
+            this.updateEffects();
+            return;
+        }
+
+        // 检测是否需要分屏
+        const charDistance = Math.abs(this.mecha1.x - this.mecha2.x);
+        const splitThreshold = canvas.width * 0.75;
+        this.isSplitScreen = charDistance > splitThreshold;
+
+        // 更新摄像机
+        if (this.isSplitScreen) {
+            this.camera.updateSplitScreen(this.mecha1, this.mecha2);
+        } else {
+            this.camera.update(this.mecha1, this.mecha2);
+        }
+
+        // 更新机甲（传入平台用于碰撞）
+        this.mecha1.update(platforms);
+        this.mecha2.update(platforms);
+
+        // 处理禁锢技能
+        if (this.mecha1.wantImprison) this.executeImprison(this.mecha1, this.mecha2);
+        if (this.mecha2.wantImprison) this.executeImprison(this.mecha2, this.mecha1);
+        // 处理大招
+        if (this.mecha1.wantUltimate) this.executeUltimate(this.mecha1);
+        if (this.mecha2.wantUltimate) this.executeUltimate(this.mecha2);
+
+        // 更新平台
+        platforms.forEach(p => p.update());
+
+        // 更新木桶
+        barrels.forEach(b => b.update());
+
+        // Bot AI 更新（PVE模式）
+        if (this.gameMode === 'pve') {
+            this.updateBotAI();
+        }
+
+        // 碰撞检测与战斗判定
+        this.handleCombat();
+
+        // 弹幕更新与碰撞
+        this.handleProjectiles();
+
+        // 超级弹幕更新与碰撞
+        this.handleSuperProjectiles();
+
+        // 检查胜负
+        if (this.mecha1.hp <= 0 || this.mecha2.hp <= 0) {
+            this.state = 'gameover';
+            this.winner = this.mecha1.hp > 0 ? this.mecha1 : this.mecha2;
+            this.gameOverTimer = 0;
+        }
+
+        // 更新残影
+        for (let i = afterimages.length - 1; i >= 0; i--) {
+            afterimages[i].timer--;
+            if (afterimages[i].timer <= 0) afterimages.splice(i, 1);
+        }
+        // 更新禁锢效果
+        for (let i = cageEffects.length - 1; i >= 0; i--) {
+            cageEffects[i].timer--;
+            if (cageEffects[i].timer <= 0 || cageEffects[i].target.imprisonTimer <= 0) {
+                cageEffects.splice(i, 1);
+            }
+        }
+
+        // 更新特效
+        this.updateEffects();
+    }
+
+    // 执行禁锢技能
+    executeImprison(caster, target) {
+        if (target.hp <= 0 || target.imprisonTimer > 0) return;
+        caster.rage -= IMPRISON_COST;
+        caster.skillCooldown = SKILL_COOLDOWN;
+        caster.wantImprison = false;
+        target.imprisonTimer = IMPRISON_DURATION;
+        target.state = 'imprisoned';
+        target.hitStun = 0;
+        cageEffects.push({ target: target, timer: IMPRISON_DURATION, maxTimer: IMPRISON_DURATION });
+        spawnParticles(target.x + target.width / 2, target.y + target.height / 2, 15, '#9b59b6', 4);
+    }
+
+    // 执行大招（超大远程弹幕）
+    executeUltimate(caster) {
+        caster.rage -= ULTIMATE_COST;
+        caster.skillCooldown = SKILL_COOLDOWN;
+        caster.wantUltimate = false;
+        // 创建激光束（跟随角色发射）
+        superProjectiles.push(new SuperProjectile(caster));
+        spawnParticles(caster.x + caster.width / 2, caster.y + caster.height / 2, 12, caster.colors.eye, 4);
+    }
+
+    // ===================== Bot AI 决策 =====================
+    updateBotAI() {
+        const bot = this.mecha2;
+        const target = this.mecha1;
+        if (bot.hp <= 0 || target.hp <= 0) {
+            this.botInput = { left:false, right:false, jump:false, attack:false, defend:false, ranged:false, flash:false, imprison:false, ultimate:false, jet:false };
+            return;
+        }
+
+        // 重置为 false，下面按需设为 true
+        const inp = { left:false, right:false, jump:false, attack:false, defend:false, ranged:false, flash:false, imprison:false, ultimate:false, jet:false };
+
+        const dx = target.x - bot.x;            // 正数=目标在右
+        const dist = Math.abs(dx);
+        const dy = target.y - bot.y;            // 正数=目标在下方
+        const dir = dx > 0 ? 1 : -1;
+        bot.facing = dir;
+
+        // --- 行为计时器：每若干帧重新决策 ---
+        this.botThinkTimer--;
+        if (this.botThinkTimer <= 0) {
+            this.botThinkTimer = 15 + Math.floor(Math.random() * 20); // 15~35帧决策一次
+            // 根据距离选择行为
+            if (dist < 80) {
+                // 近距离：攻击为主，偶尔防御或闪现
+                const r = Math.random();
+                if (r < 0.55) this.botCurrentAction = 'attack';
+                else if (r < 0.75) this.botCurrentAction = 'defend';
+                else if (r < 0.85 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
+                else this.botCurrentAction = 'approach';
+            } else if (dist < 250) {
+                // 中距离：接近 + 远程骚扰
+                const r = Math.random();
+                if (r < 0.45) this.botCurrentAction = 'approach';
+                else if (r < 0.7 && bot.projectileCooldown <= 0) this.botCurrentAction = 'ranged';
+                else if (r < 0.8 && bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0) this.botCurrentAction = 'ultimate';
+                else this.botCurrentAction = 'approach';
+            } else {
+                // 远距离：快速接近，或使用闪现拉近距离
+                const r = Math.random();
+                if (r < 0.15 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
+                else if (r < 0.3 && bot.rage >= IMPRISON_COST && bot.skillCooldown <= 0) this.botCurrentAction = 'imprison';
+                else this.botCurrentAction = 'approach';
+            }
+            this.botActionTimer = 10 + Math.floor(Math.random() * 15);
+        }
+
+        // --- 执行当前行为 ---
+        this.botActionTimer--;
+        switch (this.botCurrentAction) {
+            case 'approach':
+                if (dx > 10) inp.right = true;
+                else if (dx < -10) inp.left = true;
+                // 接近时如果目标在高处且自己在地面，跳跃
+                if (dy < -40 && bot.onGround()) inp.jump = true;
+                break;
+            case 'attack':
+                if (dist > 55) {
+                    // 还不够近，先靠近
+                    if (dx > 0) inp.right = true; else inp.left = true;
+                } else {
+                    inp.attack = true;
+                }
+                break;
+            case 'defend':
+                inp.defend = true;
+                break;
+            case 'ranged':
+                inp.ranged = true;
+                // 同时微调朝向
+                if (dx > 10) inp.right = true; else if (dx < -10) inp.left = true;
+                break;
+            case 'flash':
+                inp.flash = true;
+                // 闪现后继续接近
+                if (dx > 0) inp.right = true; else inp.left = true;
+                break;
+            case 'imprison':
+                inp.imprison = true;
+                break;
+            case 'ultimate':
+                inp.ultimate = true;
+                break;
+        }
+
+        // --- 被动反应：对手正在攻击且距离近时，有概率防御 ---
+        if (target.attackActive && dist < 70 && Math.random() < 0.35) {
+            inp.defend = true;
+            inp.right = false;
+            inp.left = false;
+        }
+
+        // --- 被动反应：血量低时更倾向防御和拉开距离 ---
+        if (bot.hp < 100 && Math.random() < 0.02) {
+            this.botCurrentAction = 'retreat';
+        }
+        if (this.botCurrentAction === 'retreat') {
+            if (dx > 0) inp.left = true; else inp.right = true;
+            if (Math.random() < 0.3) inp.defend = true;
+        }
+
+        // --- 怒气满时优先使用大招 ---
+        if (bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0 && dist < 300 && Math.random() < 0.02) {
+            inp.ultimate = true;
+            this.botCurrentAction = 'ultimate';
+        }
+
+        // --- 空中喷气恢复（偶尔在空中喷气延缓下落） ---
+        if (!bot.onGround() && bot.jetFuel > 50 && dy < -60 && Math.random() < 0.1) {
+            inp.jet = true;
+        }
+
+        // 写回 botInput
+        this.botInput = inp;
+    }
+
+    handleCombat() {
+        const m1 = this.mecha1;
+        const m2 = this.mecha2;
+
+        // 近战攻击判定（机甲间不再碰撞，可互相穿过）
+        if (m1.attackActive && m1.attackHitbox) {
+            this.checkAttackHit(m1, m2);
+            this.checkAttackOnPlatforms(m1);
+            this.checkAttackOnBarrels(m1);
+        }
+        if (m2.attackActive && m2.attackHitbox) {
+            this.checkAttackHit(m2, m1);
+            this.checkAttackOnPlatforms(m2);
+            this.checkAttackOnBarrels(m2);
+        }
+    }
+
+    checkAttackHit(attacker, target) {
+        if (target.state === 'dead' || target.hitStun > 0) return;
+
+        const hb = attacker.attackHitbox;
+        const tx = target.x;
+        const ty = target.y;
+        const tw = target.width;
+        const th = target.height;
+
+        if (hb.x < tx + tw && hb.x + hb.width > tx &&
+            hb.y < ty + th && hb.y + hb.height > ty) {
+            // 使用连击段位伤害和击退参数
+            target.takeDamage(hb.damage, attacker, {
+                knockback: hb.knockback,
+                knockdown: hb.knockdown
+            });
+            attacker.attackActive = false; // 一帧只命中一次
+            attacker.onAttackHit(); // 标记命中，开启取消窗口
+        }
+    }
+
+    // 近战攻击命中平台（平台受损）
+    checkAttackOnPlatforms(attacker) {
+        const hb = attacker.attackHitbox;
+        for (const p of platforms) {
+            if (p.broken) continue;
+            if (hb.x < p.x + p.width && hb.x + hb.width > p.x &&
+                hb.y < p.y + p.height && hb.y + hb.height > p.y) {
+                p.takeHit();
+                attacker.attackActive = false;
+                break;
+            }
+        }
+    }
+
+    // 近战攻击命中木桶（木桶受损）
+    checkAttackOnBarrels(attacker) {
+        const hb = attacker.attackHitbox;
+        for (const b of barrels) {
+            const hitbox = b.getHitbox();
+            if (!hitbox) continue;
+            if (hb.x < hitbox.x + hitbox.width && hb.x + hb.width > hitbox.x &&
+                hb.y < hitbox.y + hitbox.height && hb.y + hb.height > hitbox.y) {
+                b.takeHit();
+                attacker.attackActive = false;
+                break;
+            }
+        }
+    }
+
+    // 弹幕更新与碰撞检测
+    handleProjectiles() {
+        for (let i = projectiles.length - 1; i >= 0; i--) {
+            const proj = projectiles[i];
+            proj.update();
+
+            if (proj.dead) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+
+            // 弹幕命中机甲（不命中发射者）
+            const targets = [this.mecha1, this.mecha2].filter(m => m !== proj.owner && m.hp > 0);
+            for (const target of targets) {
+                const hb = proj.getHitbox();
+                if (hb.x < target.x + target.width && hb.x + hb.width > target.x &&
+                    hb.y < target.y + target.height && hb.y + hb.height > target.y) {
+                    // 弹幕造成远程伤害（无击倒）
+                    target.takeDamage(PROJECTILE_DAMAGE, proj.owner, { knockback: 3 });
+                    proj.dead = true;
+                    break;
+                }
+            }
+            if (proj.dead) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+
+            // 弹幕命中平台
+            for (const p of platforms) {
+                if (p.broken) continue;
+                const hb = proj.getHitbox();
+                if (hb.x < p.x + p.width && hb.x + hb.width > p.x &&
+                    hb.y < p.y + p.height && hb.y + hb.height > p.y) {
+                    p.takeHit();
+                    proj.dead = true;
+                    spawnParticles(proj.x, proj.y, 5, proj.color, 3);
+                    break;
+                }
+            }
+            if (proj.dead) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+
+            // 弹幕命中木桶
+            for (const b of barrels) {
+                const hitbox = b.getHitbox();
+                if (!hitbox) continue;
+                const hb = proj.getHitbox();
+                if (hb.x < hitbox.x + hitbox.width && hb.x + hb.width > hitbox.x &&
+                    hb.y < hitbox.y + hitbox.height && hb.y + hb.height > hitbox.y) {
+                    b.takeHit();
+                    proj.dead = true;
+                    spawnParticles(proj.x, proj.y, 5, proj.color, 3);
+                    break;
+                }
+            }
+            if (proj.dead) {
+                projectiles.splice(i, 1);
+                continue;
+            }
+        }
+    }
+
+    // 超级弹幕更新与碰撞检测（穿透，每个目标只命中一次）
+    handleSuperProjectiles() {
+        for (let i = superProjectiles.length - 1; i >= 0; i--) {
+            const sp = superProjectiles[i];
+            sp.update();
+            if (sp.dead) { superProjectiles.splice(i, 1); continue; }
+
+            // 激光束每 5 帧对路径内目标造成一次伤害
+            if (sp.damageTimer >= 5) {
+                sp.damageTimer = 0;
+                const hb = sp.getHitbox();
+
+                // 命中机甲
+                const targets = [this.mecha1, this.mecha2].filter(m => m !== sp.caster && m.hp > 0);
+                for (const target of targets) {
+                    if (hb.x < target.x + target.width && hb.x + hb.width > target.x &&
+                        hb.y < target.y + target.height && hb.y + hb.height > target.y) {
+                        target.takeDamage(SUPER_PROJECTILE_DAMAGE, sp.caster, { knockback: 3 });
+                    }
+                }
+                // 命中平台
+                for (const p of platforms) {
+                    if (p.broken) continue;
+                    if (hb.x < p.x + p.width && hb.x + hb.width > p.x &&
+                        hb.y < p.y + p.height && hb.y + hb.height > p.y) {
+                        p.takeHit();
+                    }
+                }
+                // 命中木桶
+                for (const b of barrels) {
+                    const hitbox = b.getHitbox();
+                    if (!hitbox) continue;
+                    if (hb.x < hitbox.x + hitbox.width && hb.x + hb.width > hitbox.x &&
+                        hb.y < hitbox.y + hitbox.height && hb.y + hb.height > hitbox.y) {
+                        b.takeHit();
+                    }
+                }
+            }
+        }
+    }
+
+    updateEffects() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            particles[i].update();
+            if (particles[i].life <= 0) particles.splice(i, 1);
+        }
+        for (let i = damageNumbers.length - 1; i >= 0; i--) {
+            damageNumbers[i].update();
+            if (damageNumbers[i].life <= 0) damageNumbers.splice(i, 1);
+        }
+
+        // 木桶爆炸范围伤害 + 刷新
+        for (let i = barrels.length - 1; i >= 0; i--) {
+            const b = barrels[i];
+            if (!b.destroyed) continue;
+
+            // 爆炸伤害（逐帧检查直到有人受伤或窗口结束）
+            if (!b.explosionApplied) {
+                let anyHit = false;
+                const targets = [this.mecha1, this.mecha2];
+                for (const m of targets) {
+                    if (m.hp <= 0) continue;
+                    if (b.checkExplosionDamage(m)) {
+                        m.takeDamage(b.explosionDamage, null, { knockback: 8, knockdown: true });
+                        anyHit = true;
+                    }
+                }
+                // 爆炸连锁
+                for (const other of barrels) {
+                    if (other === b || other.destroyed) continue;
+                    const cx = b.x + b.width / 2;
+                    const cy = b.y + b.height / 2;
+                    const ox = other.x + other.width / 2;
+                    const oy = other.y + other.height / 2;
+                    const dist = Math.sqrt((cx - ox) ** 2 + (cy - oy) ** 2);
+                    if (dist < b.explosionRadius * 0.7) {
+                        other.takeHit();
+                        anyHit = true;
+                    }
+                }
+                // 有人受伤或窗口结束后标记已处理
+                if (anyHit || b.explosionTimer > 12) {
+                    b.explosionApplied = true;
+                }
+            }
+
+            // 爆炸动画结束后，在世界范围内随机位置刷新新木桶（可在地面或平台上）
+            if (b.explosionTimer > 30 && !b.hasRespawned) {
+                barrels.push(this.spawnBarrelRandomly());
+                b.hasRespawned = true;
+            }
+
+            // 完全结束后从数组移除（避免无限增长）
+            if (b.explosionTimer > 60) {
+                barrels.splice(i, 1);
+            }
+        }
+    }
+
+    draw() {
+        // 清空画布
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (this.state === 'menu') {
+            this.drawMenu();
+            return;
+        }
+
+        if (this.isSplitScreen) {
+            // 左半屏（玩家1）
+            this.drawWorld(this.camera.x1, this.camera.y1, 0, canvas.width / 2);
+            // 分隔线
+            ctx.fillStyle = '#222';
+            ctx.fillRect(canvas.width / 2 - 2, 0, 4, canvas.height);
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 - 2, 0);
+            ctx.lineTo(canvas.width / 2 - 2, canvas.height);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2 + 2, 0);
+            ctx.lineTo(canvas.width / 2 + 2, canvas.height);
+            ctx.stroke();
+            // 右半屏（玩家2）
+            this.drawWorld(this.camera.x2, this.camera.y2, canvas.width / 2, canvas.width / 2);
+        } else {
+            // 正常合屏
+            this.drawWorld(this.camera.x, this.camera.y, 0, canvas.width);
+        }
+
+        // === 屏幕坐标绘制（不受摄像机偏移）===
+        // 绘制UI
+        drawUI(ctx, this.mecha1, this.mecha2, this.isSplitScreen);
+
+        if (this.state === 'gameover') {
+            this.drawGameOver();
+        }
+    }
+
+    // 绘制半个屏幕的世界内容
+    drawWorld(camX, camY, screenX, screenWidth) {
+        ctx.save();
+        // 设置clip区域（屏幕坐标）
+        ctx.beginPath();
+        ctx.rect(screenX, 0, screenWidth, canvas.height);
+        ctx.clip();
+        // 应用相机偏移：使世界坐标 camX 映射到屏幕 screenX
+        ctx.translate(screenX - camX, -camY);
+
+        // 绘制背景
+        drawBackground(ctx, camX, camY);
+
+        // 绘制悬浮平台（在机甲之下）
+        platforms.forEach(p => p.draw(ctx));
+
+        // 绘制木桶（在地面之上、机甲之下）
+        barrels.forEach(b => b.draw(ctx));
+
+        // 绘制残影（在机甲之下）
+        afterimages.forEach(a => drawAfterimage(ctx, a));
+
+        // 绘制机甲
+        this.mecha1.draw(ctx);
+        this.mecha2.draw(ctx);
+
+        // 绘制弹幕
+        projectiles.forEach(p => p.draw(ctx));
+
+        // 绘制超级弹幕
+        superProjectiles.forEach(p => p.draw(ctx));
+
+        // 绘制禁锢笼子
+        cageEffects.forEach(c => drawCage(ctx, c));
+
+        // 绘制粒子
+        particles.forEach(p => p.draw(ctx));
+
+        // 绘制伤害数字
+        damageNumbers.forEach(d => d.draw(ctx));
+
+        // 绘制攻击特效线
+        if (this.mecha1.attackActive) this.drawAttackEffect(ctx, this.mecha1);
+        if (this.mecha2.attackActive) this.drawAttackEffect(ctx, this.mecha2);
+
+        // 弹反提示（世界坐标层）
+        drawParryIndicator(ctx, this.mecha1);
+        drawParryIndicator(ctx, this.mecha2);
+
+        ctx.restore();
+    }
+
+    drawAttackEffect(ctx, mecha) {
+        const x = mecha.x + mecha.width / 2;
+        const y = mecha.y + 25;
+        const len = 40 + (mecha.comboStage - 1) * 10;
+        const angle = (mecha.facing > 0 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5;
+
+        // 连击段位越高特效越强烈
+        const effectColor = mecha.comboStage === 3 ? '#e74c3c' : (mecha.comboStage === 2 ? '#f39c12' : mecha.colors.accent);
+        ctx.strokeStyle = effectColor;
+        ctx.lineWidth = 3 + mecha.comboStage;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+        ctx.stroke();
+    }
+
+    drawMenu() {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // 标题
+        drawPixelText(ctx, '像素机甲对决', canvas.width / 2, 40, 48, '#f1c40f');
+        drawPixelText(ctx, 'PIXEL MECHA BATTLE', canvas.width / 2, 78, 16, '#888');
+
+        if (this.menuMode === 'modeSelect') {
+            // === 模式选择界面 ===
+            drawPixelText(ctx, '选择游戏模式', canvas.width / 2, 130, 24, '#f39c12');
+
+            // 单机模式卡片
+            const cardW = 280, cardH = 120;
+            const pveX = canvas.width / 2 - cardW - 30;
+            const pveY = 200;
+            const pvpX = canvas.width / 2 + 30;
+            const pvpY = 200;
+
+            // PVE卡片
+            ctx.fillStyle = 'rgba(46,204,113,0.2)';
+            ctx.fillRect(pveX, pveY, cardW, cardH);
+            ctx.strokeStyle = '#2ecc71';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(pveX, pveY, cardW, cardH);
+            drawPixelText(ctx, '单机模式', pveX + cardW / 2, pveY + 35, 24, '#2ecc71');
+            drawPixelText(ctx, '玩家 vs AI Bot', pveX + cardW / 2, pveY + 65, 14, '#aaa');
+            drawPixelText(ctx, '按 [1] 选择', pveX + cardW / 2, pveY + 95, 16, '#2ecc71');
+
+            // PVP卡片
+            ctx.fillStyle = 'rgba(231,76,60,0.2)';
+            ctx.fillRect(pvpX, pvpY, cardW, cardH);
+            ctx.strokeStyle = '#e74c3c';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(pvpX, pvpY, cardW, cardH);
+            drawPixelText(ctx, '多人模式', pvpX + cardW / 2, pvpY + 35, 24, '#e74c3c');
+            drawPixelText(ctx, '玩家1 vs 玩家2', pvpX + cardW / 2, pvpY + 65, 14, '#aaa');
+            drawPixelText(ctx, '按 [2] 选择', pvpX + cardW / 2, pvpY + 95, 16, '#e74c3c');
+
+            // 操作提示
+            drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 380, 10, '#777');
+            drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶', canvas.width / 2, 400, 10, '#666');
+
+            const blink = Math.sin(Date.now() * 0.006) > 0;
+            if (blink) {
+                drawPixelText(ctx, '按 1 或 2 选择模式', canvas.width / 2, 470, 18, '#fff');
+            }
+        } else if (this.menuMode === 'weaponSelect') {
+            // === 武器选择界面 ===
+            const modeLabel = this.gameMode === 'pve' ? '单机模式 - 选择你的武器' : '多人模式 - 双方选择武器';
+            drawPixelText(ctx, modeLabel, canvas.width / 2, 108, 16, '#f39c12');
+
+            const p1w = WEAPONS[WEAPON_KEYS[this.p1WeaponIdx]];
+            const p2w = WEAPONS[WEAPON_KEYS[this.p2WeaponIdx]];
+
+            // === 玩家1武器选择（左侧） ===
+            drawPixelText(ctx, '[ 玩家1 ]', 240, 145, 22, '#3498db');
+
+            for (let i = 0; i < WEAPON_KEYS.length; i++) {
+                const wk = WEAPON_KEYS[i];
+                const w = WEAPONS[wk];
+                const selected = i === this.p1WeaponIdx;
+                const cardX = 80;
+                const cardY = 168 + i * 78;
+
+                ctx.fillStyle = selected ? 'rgba(52,152,219,0.3)' : 'rgba(50,50,50,0.5)';
+                ctx.fillRect(cardX, cardY, 320, 68);
+                if (selected) {
+                    ctx.strokeStyle = '#3498db';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(cardX, cardY, 320, 68);
+                }
+
+                this.drawWeaponIcon(ctx, cardX + 30, cardY + 34, wk, '#3498db', '#85c1e9', '#5dade2');
+
+                const nameColor = selected ? '#3498db' : '#666';
+                drawPixelText(ctx, w.name, cardX + 70, cardY + 16, 16, nameColor, 'left');
+                drawPixelText(ctx, w.desc, cardX + 70, cardY + 34, 10, selected ? '#aaa' : '#555', 'left');
+                drawPixelText(ctx, '伤害:' + w.comboDamage.join('/') + '  防御:' + w.defense + '  移速:' + w.moveSpeed,
+                    cardX + 70, cardY + 50, 10, selected ? '#888' : '#444', 'left');
+            }
+
+            drawPixelText(ctx, 'Q/E 切换武器', 240, 410, 13, '#5dade2');
+
+            // === 玩家2/Bot 武器选择（右侧） ===
+            if (this.gameMode === 'pvp') {
+                drawPixelText(ctx, '[ 玩家2 ]', canvas.width - 240, 145, 22, '#e74c3c');
+            } else {
+                drawPixelText(ctx, '[ AI Bot ]', canvas.width - 240, 145, 22, '#9b59b6');
+            }
+
+            for (let i = 0; i < WEAPON_KEYS.length; i++) {
+                const wk = WEAPON_KEYS[i];
+                const w = WEAPONS[wk];
+                const selected = i === this.p2WeaponIdx;
+                const cardX = canvas.width - 400;
+                const cardY = 168 + i * 78;
+
+                const accentColor = this.gameMode === 'pvp' ? '#e74c3c' : '#9b59b6';
+                const lightColor = this.gameMode === 'pvp' ? '#f1948a' : '#bb8fce';
+                const darkColor = this.gameMode === 'pvp' ? '#ec7063' : '#7d3c98';
+
+                ctx.fillStyle = selected ? `rgba(${this.gameMode === 'pvp' ? '231,76,60' : '155,89,182'},0.3)` : 'rgba(50,50,50,0.5)';
+                ctx.fillRect(cardX, cardY, 320, 68);
+                if (selected) {
+                    ctx.strokeStyle = accentColor;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(cardX, cardY, 320, 68);
+                }
+
+                this.drawWeaponIcon(ctx, cardX + 30, cardY + 34, wk, accentColor, lightColor, darkColor);
+
+                const nameColor = selected ? accentColor : '#666';
+                drawPixelText(ctx, w.name, cardX + 70, cardY + 16, 16, nameColor, 'left');
+                drawPixelText(ctx, w.desc, cardX + 70, cardY + 34, 10, selected ? '#aaa' : '#555', 'left');
+                drawPixelText(ctx, '伤害:' + w.comboDamage.join('/') + '  防御:' + w.defense + '  移速:' + w.moveSpeed,
+                    cardX + 70, cardY + 50, 10, selected ? '#888' : '#444', 'left');
+            }
+
+            if (this.gameMode === 'pvp') {
+                drawPixelText(ctx, '7/8 切换武器', canvas.width - 240, 410, 13, '#ec7063');
+            } else {
+                drawPixelText(ctx, 'Bot 将随机选择武器', canvas.width - 240, 410, 13, '#bb8fce');
+            }
+
+            // VS分隔线
+            ctx.strokeStyle = '#f1c40f';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, 130);
+            ctx.lineTo(canvas.width / 2, 400);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            drawPixelText(ctx, 'VS', canvas.width / 2, 270, 28, '#f1c40f');
+
+            // 操作说明（底部）
+            drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 448, 10, '#777');
+            drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶,松手加快坠落', canvas.width / 2, 466, 10, '#666');
+
+            // 开始提示
+            const blink = Math.sin(Date.now() * 0.006) > 0;
+            if (blink) {
+                drawPixelText(ctx, '按 空格 开始战斗  |  ESC 返回模式选择', canvas.width / 2, 500, 18, '#fff');
+            }
+        }
+    }
+
+    // 菜单武器图标（静态像素图）
+    drawWeaponIcon(ctx, x, y, weaponKey, mainColor, lightColor, accentColor) {
+        if (weaponKey === 'dagger') {
+            // 短刀图标：短匕首
+            drawPixelRect(ctx, x - 1, y + 4, 3, 10, '#666');     // 柄
+            drawPixelRect(ctx, x - 4, y + 2, 9, 3, '#666');     // 护手
+            drawPixelRect(ctx, x - 1, y - 14, 3, 18, mainColor); // 刃
+            drawPixelRect(ctx, x - 3, y - 10, 7, 14, lightColor); // 光晕
+            drawPixelRect(ctx, x - 1, y - 16, 3, 3, '#fff');      // 尖
+        } else if (weaponKey === 'spear') {
+            // 长枪图标：长杆+枪头
+            drawPixelRect(ctx, x - 1, y - 8, 2, 28, '#8B4513');  // 杆
+            drawPixelRect(ctx, x - 5, y - 20, 10, 6, mainColor); // 枪头宽部
+            drawPixelRect(ctx, x - 2, y - 28, 4, 10, mainColor); // 枪尖
+            drawPixelRect(ctx, x - 7, y - 18, 14, 3, lightColor); // 光
+            drawPixelRect(ctx, x - 1, y - 30, 2, 4, '#fff');      // 尖端
+        } else {
+            // 剑盾图标：左手盾+右手剑
+            // 盾（左侧）
+            drawPixelRect(ctx, x - 16, y - 10, 10, 22, mainColor);
+            drawPixelRect(ctx, x - 14, y - 8, 6, 18, lightColor);
+            drawPixelRect(ctx, x - 12, y - 4, 3, 10, accentColor);
+            // 剑（右侧）
+            drawPixelRect(ctx, x + 6, y + 2, 3, 10, '#666');     // 柄
+            drawPixelRect(ctx, x + 6, y - 16, 3, 20, mainColor); // 剑身
+            drawPixelRect(ctx, x + 4, y - 14, 7, 16, lightColor); // 光
+            drawPixelRect(ctx, x + 7, y - 18, 1, 3, '#fff');      // 尖
+        }
+    }
+
+    drawMenuMecha(ctx, x, y, facing, primary) {
+        ctx.save();
+        ctx.translate(x, y);
+
+        const c = { primary, dark: '#1a1a1a', light: primary, eye: '#f1c40f', joint: '#666' };
+
+        // 简单机甲绘制
+        drawPixelRect(ctx, -20, 0, 40, 30, c.primary);
+        drawPixelRect(ctx, -14, -20, 28, 22, c.primary);
+        drawPixelRect(ctx, -10, -16, 20, 14, c.dark);
+        drawPixelRect(ctx, facing > 0 ? 0 : -6, -14, 6, 4, c.eye);
+        drawPixelRect(ctx, -26, 5, 10, 20, c.primary);
+        drawPixelRect(ctx, 16, 5, 10, 20, c.primary);
+        drawPixelRect(ctx, -16, 30, 12, 20, c.dark);
+        drawPixelRect(ctx, 4, 30, 12, 20, c.dark);
+
+        ctx.restore();
+    }
+
+    drawGameOver() {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        let winnerLabel, winnerColor;
+        if (this.winner.isPlayer1) {
+            winnerLabel = '玩家1 获胜！';
+            winnerColor = '#3498db';
+        } else {
+            if (this.gameMode === 'pve') {
+                winnerLabel = 'AI Bot 获胜！';
+            } else {
+                winnerLabel = '玩家2 获胜！';
+            }
+            winnerColor = '#e74c3c';
+        }
+
+        drawPixelText(ctx, '游戏结束', canvas.width / 2, 220, 48, '#fff');
+        drawPixelText(ctx, winnerLabel, canvas.width / 2, 280, 36, winnerColor);
+
+        if (this.gameOverTimer > 60) {
+            const blink = Math.sin(Date.now() * 0.005) > 0;
+            if (blink) {
+                drawPixelText(ctx, '按 空格 返回菜单', canvas.width / 2, 340, 18, '#aaa');
+            }
+        }
+    }
+
+    drawHitboxes() {
+        [this.mecha1, this.mecha2].forEach(m => {
+            ctx.strokeStyle = '#0f0';
+            ctx.strokeRect(m.x, m.y, m.width, m.height);
+            if (m.attackHitbox) {
+                ctx.strokeStyle = '#f00';
+                ctx.strokeRect(m.attackHitbox.x, m.attackHitbox.y,
+                    m.attackHitbox.width, m.attackHitbox.height);
+            }
+        });
+    }
+}
+
+// ===================== 启动 =====================
+let game; // 全局游戏实例（供 Mecha.getInput 等访问）
+(function startGame() {
+    game = new Game();
+
+    // 自动聚焦画布，确保键盘事件被正确接收
+    canvas.focus();
+    window.addEventListener('click', () => canvas.focus());
+
+    // 在事件回调中直接处理菜单按键（最可靠，不依赖帧循环）
+    window.addEventListener('keydown', (e) => {
+        const key = e.key;
+        if (game.state === 'menu') {
+            if (game.menuMode === 'modeSelect') {
+                // 模式选择：1=单机, 2=多人
+                if (key === '1') {
+                    game.gameMode = 'pve';
+                    game.menuMode = 'weaponSelect';
+                    e.preventDefault();
+                }
+                if (key === '2') {
+                    game.gameMode = 'pvp';
+                    game.menuMode = 'weaponSelect';
+                    e.preventDefault();
+                }
+            } else if (game.menuMode === 'weaponSelect') {
+                // 玩家1武器选择
+                if (key === 'q' || key === 'Q') {
+                    game.p1WeaponIdx = (game.p1WeaponIdx - 1 + WEAPON_KEYS.length) % WEAPON_KEYS.length;
+                    e.preventDefault();
+                }
+                if (key === 'e' || key === 'E') {
+                    game.p1WeaponIdx = (game.p1WeaponIdx + 1) % WEAPON_KEYS.length;
+                    e.preventDefault();
+                }
+                // PVP模式玩家2武器选择
+                if (game.gameMode === 'pvp') {
+                    if (key === '7') {
+                        game.p2WeaponIdx = (game.p2WeaponIdx - 1 + WEAPON_KEYS.length) % WEAPON_KEYS.length;
+                        e.preventDefault();
+                    }
+                    if (key === '8') {
+                        game.p2WeaponIdx = (game.p2WeaponIdx + 1) % WEAPON_KEYS.length;
+                        e.preventDefault();
+                    }
+                }
+                // 开始游戏
+                if (key === ' ' || key === 'Enter') {
+                    if (game.gameMode === 'pve') {
+                        game.p2WeaponIdx = Math.floor(Math.random() * WEAPON_KEYS.length);
+                    }
+                    game.state = 'playing';
+                    game.reset();
+                    e.preventDefault();
+                }
+                // ESC返回模式选择
+                if (key === 'Escape') {
+                    game.menuMode = 'modeSelect';
+                    e.preventDefault();
+                }
+            }
+        } else if (game.state === 'gameover' && game.gameOverTimer > 60) {
+            if (key === ' ' || key === 'Enter') {
+                game.state = 'menu';
+                game.menuMode = 'modeSelect';
+                e.preventDefault();
+            }
+        }
+    });
+
+    // 点击页面只返回菜单
+    window.addEventListener('mousedown', () => {
+        if (game.state === 'gameover' && game.gameOverTimer > 60) {
+            game.state = 'menu';
+            game.menuMode = 'modeSelect';
+        }
+    });
+
+    Input.init();
+
+    const startBtn = document.getElementById('startBtn');
+    startBtn.addEventListener('click', () => {
+        if (game.state === 'gameover' && game.gameOverTimer > 60) {
+            game.state = 'menu';
+        }
+    });
+
+    function gameLoop() {
+        game.update();
+        game.draw();
+
+        // 同步按钮显示状态（菜单中不显示按钮，必须用键盘选武器+空格开始）
+        if (game.state === 'gameover' && game.gameOverTimer > 60) {
+            startBtn.style.display = 'block';
+            startBtn.textContent = '返回菜单';
+        } else {
+            startBtn.style.display = 'none';
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+
+    // ===================== PWA Service Worker 注册 =====================
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('./sw.js')
+                .then((reg) => console.log('PWA Service Worker 已注册，可离线使用'))
+                .catch((err) => console.log('Service Worker 注册失败:', err));
+        });
+    }
+})();
+</script>
+</body>
+</html>
