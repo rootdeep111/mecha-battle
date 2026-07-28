@@ -1204,18 +1204,23 @@ class Mecha {
 
     getInput() {
         if (this.isPlayer1) {
-            // 移动端使用触屏输入
+            // 移动端使用触屏输入（单次按下事件在读取后立即消费，避免时序问题）
             if (isMobile) {
+                const attack = touchState.attackPressed; touchState.attackPressed = false;
+                const ranged = touchState.rangedPressed; touchState.rangedPressed = false;
+                const flash = touchState.flashPressed; touchState.flashPressed = false;
+                const imprison = touchState.imprisonPressed; touchState.imprisonPressed = false;
+                const ultimate = touchState.ultimatePressed; touchState.ultimatePressed = false;
                 return {
                     left: touchState.left,
                     right: touchState.right,
                     jump: touchState.jump,
-                    attack: touchState.attackPressed,
+                    attack: attack,
                     defend: touchState.defend,
-                    ranged: touchState.rangedPressed,
-                    flash: touchState.flashPressed,
-                    imprison: touchState.imprisonPressed,
-                    ultimate: touchState.ultimatePressed,
+                    ranged: ranged,
+                    flash: flash,
+                    imprison: imprison,
+                    ultimate: ultimate,
                     jet: touchState.jet
                 };
             }
