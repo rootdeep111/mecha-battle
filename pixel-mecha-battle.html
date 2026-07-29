@@ -295,7 +295,7 @@
  * - 远程攻击：发射粒子弹幕，伤害10，可在滞空时发射
  * - 防御减伤：短刀/长枪减10点，剑盾减20点
  * - 受击后有短暂硬直
- * - 怒气系统：攻击/受击积攒怒气，1怒气=禁锢，2怒气=激光束(150伤)，闪现无消耗
+ * - 怒气系统：攻击/受击积攒怒气，1怒气=禁锢，2怒气=激光束(50伤)，闪现无消耗
  * - 喷气飞行：空中长按喷气键向上飞行（气泵值5秒），松手加速坠落，地面恢复10秒
  * ======================================================
  */
@@ -363,11 +363,11 @@ const RAGE_ON_ATTACK = 0.05;   // 自主攻击增加怒气
 const RAGE_ON_HIT = 0.1;       // 受击增加怒气
 const MAX_RAGE = 2;              // 最大怒气
 const FLASH_DISTANCE = 80;      // 闪现距离
-const FLASH_COOLDOWN = 90;      // 闪现冷却帧数
+const FLASH_COOLDOWN = 45;      // 闪现冷却帧数（缩短一半，可更频繁使用）
 const IMPRISON_COST = 1;         // 禁锢消耗怒气
 const IMPRISON_DURATION = 150;   // 禁锢持续帧数（延长）
 const ULTIMATE_COST = 2;         // 大招消耗怒气
-const SUPER_PROJECTILE_DAMAGE = 150;
+const SUPER_PROJECTILE_DAMAGE = 50;
 const SUPER_PROJECTILE_SPEED = 7;
 const SUPER_PROJECTILE_LIFE = 120;
 const SKILL_COOLDOWN = 45;       // 技能公共冷却
@@ -1456,7 +1456,7 @@ class Mecha {
         this.x = Math.max(20, Math.min(WORLD_WIDTH - 20 - this.width, this.x));
         spawnParticles(this.x + this.width / 2, this.y + this.height / 2, 8, this.colors.accent, 3);
         this.flashCooldown = FLASH_COOLDOWN;
-        this.skillCooldown = 15;
+        this.skillCooldown = 5;  // 闪现后公共技能冷却大幅缩短，可接连瞬发
     }
 
     // 统一处理战斗输入（攻击 + 防御）
@@ -2478,16 +2478,19 @@ class Game {
         this.initPlatforms();
     }
 
-    // 初始化少量有特色的平台 + 2个木桶
+    // 初始化悬浮平台（增加数量，分布更均匀）+ 2个木桶
     initPlatforms() {
         platforms = [
             // 左侧区域
             new Platform(350, 360, 160),
+            new Platform(600, 300, 140),
             new Platform(850, 260, 150),
             // 中间区域
             new Platform(1600, 320, 170),
+            new Platform(1900, 260, 150),
             new Platform(2200, 180, 190),
             // 右侧区域
+            new Platform(2650, 310, 160),
             new Platform(3000, 340, 160),
             new Platform(3500, 220, 180),
         ];
@@ -2722,14 +2725,14 @@ class Game {
         // --- 行为计时器：每若干帧重新决策 ---
         this.botThinkTimer--;
         if (this.botThinkTimer <= 0) {
-            this.botThinkTimer = 15 + Math.floor(Math.random() * 20); // 15~35帧决策一次
+            this.botThinkTimer = 30 + Math.floor(Math.random() * 25); // 30~55帧决策一次（反应变慢）
             // 根据距离选择行为
             if (dist < 80) {
                 // 近距离：攻击为主，偶尔防御或闪现
                 const r = Math.random();
-                if (r < 0.55) this.botCurrentAction = 'attack';
-                else if (r < 0.75) this.botCurrentAction = 'defend';
-                else if (r < 0.85 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
+                if (r < 0.40) this.botCurrentAction = 'attack';
+                else if (r < 0.65) this.botCurrentAction = 'defend';
+                else if (r < 0.80 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
                 else this.botCurrentAction = 'approach';
             } else if (dist < 250) {
                 // 中距离：接近 + 远程骚扰
@@ -2787,7 +2790,7 @@ class Game {
         }
 
         // --- 被动反应：对手正在攻击且距离近时，有概率防御 ---
-        if (target.attackActive && dist < 70 && Math.random() < 0.35) {
+        if (target.attackActive && dist < 70 && Math.random() < 0.20) {
             inp.defend = true;
             inp.right = false;
             inp.left = false;
@@ -2803,14 +2806,25 @@ class Game {
         }
 
         // --- 怒气满时优先使用大招 ---
-        if (bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0 && dist < 300 && Math.random() < 0.02) {
+        if (bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0 && dist < 300 && Math.random() < 0.008) {
             inp.ultimate = true;
             this.botCurrentAction = 'ultimate';
         }
 
-        // --- 空中喷气恢复（偶尔在空中喷气延缓下落） ---
-        if (!bot.onGround() && bot.jetFuel > 50 && dy < -60 && Math.random() < 0.1) {
-            inp.jet = true;
+        // --- 喷气追击：目标在跳台/高处时主动升空追击 ---
+        if (!bot.onGround() && bot.jetFuel > 15) {
+            // 目标在上方时持续喷气上升
+            if (dy < -25) {
+                inp.jet = true;
+            }
+            // 在空中接近目标平台时也喷气微调高度，方便落点
+            else if (Math.abs(dy) < 50 && dist < 120) {
+                inp.jet = true;
+            }
+        }
+        // 地面起跳：目标在跳台高度时直接跳跃（配合空中喷气可飞上高处）
+        if (bot.onGround() && dy < -60 && bot.jetFuel > 30) {
+            inp.jump = true;
         }
 
         // 写回 botInput
@@ -3202,7 +3216,7 @@ class Game {
                 drawPixelText(ctx, '移动端仅支持单机模式（vs AI Bot）', canvas.width / 2, 400, 12, '#666');
             } else {
                 drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 380, 10, '#777');
-                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶', canvas.width / 2, 400, 10, '#666');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(50伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶', canvas.width / 2, 400, 10, '#666');
             }
 
             const blink = Math.sin(Date.now() * 0.006) > 0;
@@ -3305,10 +3319,10 @@ class Game {
             // 操作说明（底部）
             if (isMobile) {
                 drawPixelText(ctx, '◀ ▶ 按钮切换武器 | 点击[开始战斗]进入游戏', canvas.width / 2, 448, 12, '#777');
-                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤)', canvas.width / 2, 466, 10, '#666');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(50伤)', canvas.width / 2, 466, 10, '#666');
             } else {
                 drawPixelText(ctx, '玩家1: A/D W跳 J攻 K防 L远 U闪 I禁 O大 F喷气  |  玩家2: ←/→ ↑跳 1攻 2防 3远 4闪 5禁 6大 0喷气', canvas.width / 2, 448, 10, '#777');
-                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(150伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶,松手加快坠落', canvas.width / 2, 466, 10, '#666');
+                drawPixelText(ctx, '攻击/受击积攒怒气 | 1怒气=禁锢 2怒气=激光束(50伤) | 闪现无消耗 | 喷气飞行:空中长按5秒飞到顶,松手加快坠落', canvas.width / 2, 466, 10, '#666');
             }
 
             // 开始提示
