@@ -582,6 +582,8 @@ function initTouchControls() {
     }
 
     // 武器选择切换按钮（移动端用按钮代替滑动）
+    // 防止 touchstart + mousedown 双触发
+    let touchActiveFlag = false;
     const btnWeaponL = document.getElementById('btnWeaponL');
     const btnWeaponR = document.getElementById('btnWeaponR');
     const btnWeaponStart = document.getElementById('btnWeaponStart');
@@ -590,6 +592,8 @@ function initTouchControls() {
         const wStart = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (e.type === 'touchstart') touchActiveFlag = true;
+            if (e.type === 'mousedown' && touchActiveFlag) return;
             btnWeaponL.classList.add('active');
             if (typeof game !== 'undefined' && game.state === 'menu' && (game.menuMode === 'weaponSelect' || game.menuMode === 'sceneSelect')) {
                 if (game.menuMode === 'weaponSelect') {
@@ -599,7 +603,7 @@ function initTouchControls() {
                 }
             }
         };
-        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponL.classList.remove('active'); };
+        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponL.classList.remove('active'); if (e.type === 'touchend' || e.type === 'touchcancel') touchActiveFlag = false; };
         btnWeaponL.addEventListener('touchstart', wStart, { passive: false });
         btnWeaponL.addEventListener('touchend', wEnd, { passive: false });
         btnWeaponL.addEventListener('touchcancel', wEnd, { passive: false });
@@ -612,6 +616,8 @@ function initTouchControls() {
         const wStart = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (e.type === 'touchstart') touchActiveFlag = true;
+            if (e.type === 'mousedown' && touchActiveFlag) return;
             btnWeaponR.classList.add('active');
             if (typeof game !== 'undefined' && game.state === 'menu' && (game.menuMode === 'weaponSelect' || game.menuMode === 'sceneSelect')) {
                 if (game.menuMode === 'weaponSelect') {
@@ -621,7 +627,7 @@ function initTouchControls() {
                 }
             }
         };
-        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponR.classList.remove('active'); };
+        const wEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponR.classList.remove('active'); if (e.type === 'touchend' || e.type === 'touchcancel') touchActiveFlag = false; };
         btnWeaponR.addEventListener('touchstart', wStart, { passive: false });
         btnWeaponR.addEventListener('touchend', wEnd, { passive: false });
         btnWeaponR.addEventListener('touchcancel', wEnd, { passive: false });
@@ -634,11 +640,13 @@ function initTouchControls() {
         const sStart = (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (e.type === 'touchstart') touchActiveFlag = true;
+            if (e.type === 'mousedown' && touchActiveFlag) return;
             btnWeaponStart.classList.add('active');
             // 触发空格键事件（武器选择时进入场景选择，场景选择时开始游戏）
             Input.pressedEvents[' '] = (Input.pressedEvents[' '] || 0) + 1;
         };
-        const sEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponStart.classList.remove('active'); };
+        const sEnd = (e) => { e.preventDefault(); e.stopPropagation(); btnWeaponStart.classList.remove('active'); if (e.type === 'touchend' || e.type === 'touchcancel') touchActiveFlag = false; };
         btnWeaponStart.addEventListener('touchstart', sStart, { passive: false });
         btnWeaponStart.addEventListener('touchend', sEnd, { passive: false });
         btnWeaponStart.addEventListener('touchcancel', sEnd, { passive: false });
@@ -3716,11 +3724,11 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
             startBtn.style.display = 'none';
         }
 
-        // 移动端：武器选择界面显示武器切换按钮
+        // 移动端：武器选择和场景选择界面显示切换按钮
         if (isMobile) {
             const tc = document.getElementById('touchControls');
             if (tc) {
-                if (game.state === 'menu' && game.menuMode === 'weaponSelect') {
+                if (game.state === 'menu' && (game.menuMode === 'weaponSelect' || game.menuMode === 'sceneSelect')) {
                     tc.classList.add('weapon-select-active');
                 } else {
                     tc.classList.remove('weapon-select-active');
