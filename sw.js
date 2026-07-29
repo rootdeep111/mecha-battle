@@ -1,5 +1,5 @@
 // Service Worker - 像素机甲对决 PWA 离线缓存
-const CACHE_NAME = 'mecha-battle-v3';
+const CACHE_NAME = 'mecha-battle-v4';
 const CACHE_FILES = [
     './',
     './pixel-mecha-battle.html',

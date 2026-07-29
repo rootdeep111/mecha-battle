@@ -3669,13 +3669,12 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
                         e.preventDefault();
                     }
                 }
-                // 开始游戏
+                // 空格进入场景选择
                 if (key === ' ' || key === 'Enter') {
                     if (game.gameMode === 'pve') {
                         game.p2WeaponIdx = Math.floor(Math.random() * WEAPON_KEYS.length);
                     }
-                    game.state = 'playing';
-                    game.reset();
+                    game.menuMode = 'sceneSelect';
                     e.preventDefault();
                 }
                 // ESC返回模式选择
@@ -3683,6 +3682,38 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
                     game.menuMode = 'modeSelect';
                     e.preventDefault();
                 }
+            } else if (game.menuMode === 'sceneSelect') {
+                // 场景选择
+                if (key === 'q' || key === 'Q') {
+                    game.selectedScene = (game.selectedScene - 1 + SCENES.length) % SCENES.length;
+                    e.preventDefault();
+                }
+                if (key === 'e' || key === 'E') {
+                    game.selectedScene = (game.selectedScene + 1) % SCENES.length;
+                    e.preventDefault();
+                }
+                // 数字键1-5快速选择场景
+                for (let i = 1; i <= 5; i++) {
+                    if (key === String(i)) {
+                        game.selectedScene = i - 1;
+                        e.preventDefault();
+                    }
+                }
+                // 空格开始游戏
+                if (key === ' ' || key === 'Enter') {
+                    game.state = 'playing';
+                    game.reset();
+                    e.preventDefault();
+                }
+                // ESC返回武器选择
+                if (key === 'Escape') {
+                    game.menuMode = 'weaponSelect';
+                    e.preventDefault();
+                }
+            }
+            // 清除已处理的按键事件，防止update()方法重复处理同一个按键
+            if (Input.pressedEvents[key]) {
+                Input.pressedEvents[key] = 0;
             }
         } else if (game.state === 'gameover' && game.gameOverTimer > 60) {
             if (key === ' ' || key === 'Enter') {
