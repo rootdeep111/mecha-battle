@@ -318,9 +318,9 @@ const KNOCKBACK_FORCE = 5;
 
 // === 武器系统 ===
 const WEAPONS = {
-    dagger:  { name: '短刀', moveSpeed: 5,   attackRange: 30,  comboDamage: [10, 20, 30], defense: 10, desc: '攻速快/移速快/范围小' },
-    spear:   { name: '长枪', moveSpeed: 3.5, attackRange: 60,  comboDamage: [7,  15, 25], defense: 10, desc: '范围大/伤害低' },
-    swordShield: { name: '剑盾', moveSpeed: 3,   attackRange: 45,  comboDamage: [10, 20, 30], defense: 20, desc: '防御强/移速慢' }
+    dagger:  { name: '短刀', moveSpeed: 4,   attackRange: 30,  comboDamage: [10, 20, 30], defense: 10, desc: '攻速快/移速快/范围小' },
+    spear:   { name: '长枪', moveSpeed: 3, attackRange: 60,  comboDamage: [7,  15, 25], defense: 10, desc: '范围大/伤害低' },
+    swordShield: { name: '剑盾', moveSpeed: 2.5, attackRange: 45,  comboDamage: [10, 20, 30], defense: 20, desc: '防御强/移速慢' }
 };
 const WEAPON_KEYS = ['dagger', 'spear', 'swordShield'];
 
@@ -2873,21 +2873,21 @@ class Game {
         // --- 行为计时器：每若干帧重新决策 ---
         this.botThinkTimer--;
         if (this.botThinkTimer <= 0) {
-            this.botThinkTimer = 80 + Math.floor(Math.random() * 60); // 80~140帧决策一次（反应很慢，像新手）
+            this.botThinkTimer = 60 + Math.floor(Math.random() * 40); // 60~100帧决策一次
             // 根据距离选择行为
             if (dist < 80) {
                 // 近距离：攻击为主，偶尔防御或闪现
                 const r = Math.random();
-                if (r < 0.18) this.botCurrentAction = 'attack';
-                else if (r < 0.50) this.botCurrentAction = 'defend';
-                else if (r < 0.70 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
+                if (r < 0.40) this.botCurrentAction = 'attack';
+                else if (r < 0.60) this.botCurrentAction = 'defend';
+                else if (r < 0.75 && bot.flashCooldown <= 0) this.botCurrentAction = 'flash';
                 else this.botCurrentAction = 'approach';
             } else if (dist < 250) {
                 // 中距离：接近 + 偶尔远程骚扰
                 const r = Math.random();
-                if (r < 0.55) this.botCurrentAction = 'approach';
-                else if (r < 0.62 && bot.projectileCooldown <= 0) this.botCurrentAction = 'ranged';
-                else if (r < 0.75 && bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0) this.botCurrentAction = 'ultimate';
+                if (r < 0.50) this.botCurrentAction = 'approach';
+                else if (r < 0.60 && bot.projectileCooldown <= 0) this.botCurrentAction = 'ranged';
+                else if (r < 0.72 && bot.rage >= ULTIMATE_COST && bot.skillCooldown <= 0) this.botCurrentAction = 'ultimate';
                 else this.botCurrentAction = 'approach';
             } else {
                 // 远距离：慢慢接近，偶尔用技能
@@ -2896,7 +2896,7 @@ class Game {
                 else if (r < 0.15 && bot.rage >= IMPRISON_COST && bot.skillCooldown <= 0) this.botCurrentAction = 'imprison';
                 else this.botCurrentAction = 'approach';
             }
-            this.botActionTimer = 15 + Math.floor(Math.random() * 25);
+            this.botActionTimer = 12 + Math.floor(Math.random() * 20);
         }
 
         // --- 执行当前行为 ---
