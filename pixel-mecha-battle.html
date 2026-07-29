@@ -2959,20 +2959,21 @@ class Game {
             this.botCurrentAction = 'ultimate';
         }
 
-        // --- 喷气追击：目标在跳台/高处时主动升空追击 ---
-        if (!bot.onGround() && bot.jetFuel > 25) {
-            // 目标在上方时喷气上升追击
-            if (dy < -35) {
-                if (Math.random() < 0.7) inp.jet = true;
-            }
-            // 在空中接近目标平台时也喷气微调高度
-            else if (Math.abs(dy) < 40 && dist < 120 && Math.random() < 0.4) {
+        // --- 飞行追击：目标在高台阶时，跳+喷气组合追上去 ---
+        // 地面时：目标在上方一定高度，先跳跃起飞（高概率，燃料门槛低）
+        if (bot.onGround() && dy < -30 && bot.jetFuel > 15) {
+            if (Math.random() < 0.8) inp.jump = true;
+        }
+        // 空中时：持续喷气上升直到接近目标高度
+        if (!bot.onGround() && bot.jetFuel > 10) {
+            // 目标在上方，持续喷气追上去
+            if (dy < -20) {
                 inp.jet = true;
             }
-        }
-        // 地面起跳：目标在跳台高度时跳跃（配合空中喷气可飞上高处）
-        if (bot.onGround() && dy < -50 && bot.jetFuel > 40 && Math.random() < 0.5) {
-            inp.jump = true;
+            // 接近目标高度时微调喷气，方便落在平台上
+            else if (dy < 10 && dy > -20 && dist < 150 && Math.random() < 0.5) {
+                inp.jet = true;
+            }
         }
 
         // 写回 botInput
