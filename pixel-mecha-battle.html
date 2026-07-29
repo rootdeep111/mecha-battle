@@ -473,9 +473,11 @@ const Input = {
 
     init() {
         window.addEventListener('keydown', (e) => {
-            // 记录本帧新按下的事件（事件计数模式，避免被 update 吞掉）
+            // 菜单状态下不记录单次按键事件（由第二个keydown处理器直接处理，避免双重触发）
             if (!this.keys[e.key]) {
-                this.pressedEvents[e.key] = (this.pressedEvents[e.key] || 0) + 1;
+                if (typeof game === 'undefined' || game.state !== 'menu') {
+                    this.pressedEvents[e.key] = (this.pressedEvents[e.key] || 0) + 1;
+                }
             }
             this.keys[e.key] = true;
             // 防止方向键/空格/回车触发浏览器默认行为
