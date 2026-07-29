@@ -3745,7 +3745,19 @@ let game; // 全局游戏实例（供 Mecha.getInput 等访问）
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
             navigator.serviceWorker.register('./sw.js')
-                .then((reg) => console.log('PWA Service Worker 已注册，可离线使用'))
+                .then((reg) => {
+                    console.log('PWA Service Worker 已注册，可离线使用');
+                    // 检测更新，有新版本时自动刷新
+                    reg.addEventListener('updatefound', () => {
+                        const newWorker = reg.installing;
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'activated') {
+                                // 新 Service Worker 已激活，刷新页面加载新缓存
+                                window.location.reload();
+                            }
+                        });
+                    });
+                })
                 .catch((err) => console.log('Service Worker 注册失败:', err));
         });
     }
