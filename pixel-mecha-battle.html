@@ -2604,15 +2604,25 @@ class Game {
         this.initPlatforms();
     }
 
-    // 初始化悬浮平台（增加数量，分布更均匀）+ 2个木桶
+    // 初始化悬浮平台（增加数量，分布更均匀）+ 木桶
     initPlatforms() {
         const scene = SCENES[this.selectedScene];
         platforms = scene.platforms.map(p => new Platform(p.x, p.y, p.w));
-        // 地面放置两个木桶
+        // 放置5个木桶：3个地面 + 2个平台上
         barrels = [
-            new Barrel(500),
-            new Barrel(2500)
+            new Barrel(400),
+            new Barrel(1200),
+            new Barrel(2200),
+            new Barrel(3100),
+            new Barrel(3600)
         ];
+        // 在中层平台上额外放2个木桶
+        if (platforms.length > 4) {
+            const p1 = platforms[1]; // 第二个平台（通常在中低层）
+            const p2 = platforms[5]; // 第六个平台
+            if (p1) barrels.push(new Barrel(p1.x + 20, p1.y - 32));
+            if (p2) barrels.push(new Barrel(p2.x + 20, p2.y - 32));
+        }
     }
 
     // 木桶爆炸后在世界范围内随机重生（可在地面或平台上）
@@ -2949,15 +2959,19 @@ class Game {
             this.botCurrentAction = 'ultimate';
         }
 
-        // --- 喷气追击：目标在跳台/高处时主动升空追击（更保守） ---
-        if (!bot.onGround() && bot.jetFuel > 40) {
-            // 目标在上方很远时才喷气上升
-            if (dy < -60) {
-                if (Math.random() < 0.4) inp.jet = true;
+        // --- 喷气追击：目标在跳台/高处时主动升空追击 ---
+        if (!bot.onGround() && bot.jetFuel > 25) {
+            // 目标在上方时喷气上升追击
+            if (dy < -35) {
+                if (Math.random() < 0.7) inp.jet = true;
+            }
+            // 在空中接近目标平台时也喷气微调高度
+            else if (Math.abs(dy) < 40 && dist < 120 && Math.random() < 0.4) {
+                inp.jet = true;
             }
         }
         // 地面起跳：目标在跳台高度时跳跃（配合空中喷气可飞上高处）
-        if (bot.onGround() && dy < -80 && bot.jetFuel > 60 && Math.random() < 0.3) {
+        if (bot.onGround() && dy < -50 && bot.jetFuel > 40 && Math.random() < 0.5) {
             inp.jump = true;
         }
 
